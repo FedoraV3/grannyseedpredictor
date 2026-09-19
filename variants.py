@@ -40,13 +40,13 @@ never sorted, deduped, or reordered, because it determines RNG
 consumption order in GeneratePlacement.
 """
 
-import glob
 import json
 import struct
 from pathlib import Path
 from typing import Optional
 
 from simulator import Item, PuzzleDef, Spot, SpawnArea
+from dump_utils import newest_dump_file
 
 
 VARIANT_DISPLAY_ORDER = [
@@ -114,21 +114,23 @@ _PROJ_DIR = Path(__file__).resolve().parent
 
 def _resolve(path: str) -> str:
     """Resolve a relative data path against the project dir; leave absolute
-    paths (and paths that already exist as given) untouched."""
+    paths untouched. Deliberately does NOT check the process CWD for a
+    same-named relative path first -- that would defeat the whole point of
+    anchoring to _PROJ_DIR (see the comment above)."""
     p = Path(path)
-    if p.is_absolute() or p.exists():
+    if p.is_absolute():
         return str(p)
     return str(_PROJ_DIR / p)
 
 
 def _newest_dump_path() -> str:
-    files = sorted(glob.glob(str(_PROJ_DIR / "dumps" / "config_*.json")))
-    if not files:
+    try:
+        return str(newest_dump_file(_PROJ_DIR / "dumps", "config_*.json"))
+    except FileNotFoundError:
         raise FileNotFoundError(
             f"No config_*.json files found in {_PROJ_DIR / 'dumps'}; a mod dump "
             "is required to supply positions/instanceIds for the scene variants."
         )
-    return files[-1]
 
 
 def _build_dump_lookups(dump_raw: dict):

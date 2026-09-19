@@ -376,7 +376,7 @@ class SceneLayout:
             f"-D NUM_ITEMS={self.num_items}",
             f"-D NUM_PUZZLES={self.num_puzzles}",
             f"-D NUM_AREAS={self.num_areas}",
-            f"-D NUM_ESCAPE={max(1, self.num_escape)}",
+            f"-D NUM_ESCAPE={self.num_escape}",
             f"-D ITEM_MASK_BITS={self.item_mask_bits}",
         ]
 
@@ -772,10 +772,11 @@ class GpuSearchBackend:
 
 
 if __name__ == "__main__":
-    import glob
+    from pathlib import Path
+    from dump_utils import newest_dump_file
 
-    dumps_dir = "dumps"
-    cfg_path = sorted(glob.glob(f"{dumps_dir}/config_*.json"))[-1]
+    dumps_dir = Path(__file__).parent / "dumps"
+    cfg_path = str(newest_dump_file(dumps_dir, "config_*.json"))
     print(f"Using config: {cfg_path}")
     cfg = simulator.load_config(cfg_path)
 

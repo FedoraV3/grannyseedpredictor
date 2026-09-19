@@ -240,7 +240,7 @@ namespace SeedDumper
 
             w.EndObject();
 
-            var fileName = $"config_{sm.Seed}_{DumpUtil.Timestamp()}.json";
+            var fileName = $"config_{sm.Seed}_{DumpUtil.Timestamp()}_{call:D6}.json";
             DumpUtil.WriteJson(fileName, w, log);
         }
 
@@ -299,7 +299,7 @@ namespace SeedDumper
 
             w.EndObject();
 
-            var fileName = $"placement_{sm.Seed}_{DumpUtil.Timestamp()}.json";
+            var fileName = $"placement_{sm.Seed}_{DumpUtil.Timestamp()}_{call:D6}.json";
             DumpUtil.WriteJson(fileName, w, log);
         }
 

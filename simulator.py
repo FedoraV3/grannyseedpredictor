@@ -793,11 +793,10 @@ def simulate(seed: int, config: dict, max_attempts: int = 50) -> dict:
 
 if __name__ == "__main__":
     from pathlib import Path
-    import glob
+    from dump_utils import newest_dump_file
 
     dumps_dir = Path(__file__).parent / "dumps"
-    config_files = sorted(dumps_dir.glob("config_*.json"))
-    cfg_path = str(config_files[-1])
+    cfg_path = str(newest_dump_file(dumps_dir, "config_*.json"))
     print(f"Using config: {cfg_path}")
     cfg = load_config(cfg_path)
 

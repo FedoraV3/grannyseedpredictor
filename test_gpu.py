@@ -30,14 +30,15 @@ Run directly: `python test_gpu.py`
 
 from __future__ import annotations
 
-import glob
 import os
 import random
 import sys
 import time
+from pathlib import Path
 
 import simulator
 from gpu_backend import GpuSearchBackend, Constraint
+from dump_utils import newest_dump_file
 
 # Force line-buffered stdout even when redirected to a file/pipe, so partial
 # progress survives if this script is killed mid-run (observed during
@@ -52,9 +53,7 @@ except Exception:
 
 
 def _newest_config_path() -> str:
-    files = sorted(glob.glob("dumps/config_*.json"))
-    assert files, "No config_*.json found in dumps/"
-    return files[-1]
+    return str(newest_dump_file(Path(__file__).parent / "dumps", "config_*.json"))
 
 
 # ---------------------------------------------------------------------------

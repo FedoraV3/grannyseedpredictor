@@ -663,13 +663,21 @@ def evaluate_seed(seed: int, ctx: SimContext, pin_targets: dict,
         # one, and it definitely mismatches a pin. Safe, definitive reject.
         return None
 
+    # `result` is keyed by each item's real-cased itemName, but constraint
+    # item_names come from user/GUI input and may differ in case -- match
+    # them the same normalized way `_run_attempt_fast`'s pin check does,
+    # instead of an exact-string lookup that would silently miss a
+    # differently-cased constraint on an otherwise-satisfied seed.
+    result_by_norm_name = {_norm_name(k): v for k, v in result.items()}
     pins_matched = sum(
-        1 for c in constraints if c.kind == "pin" and result.get(c.item_name) == c.slot_label
+        1 for c in constraints
+        if c.kind == "pin" and result_by_norm_name.get(_norm_name(c.item_name)) == c.slot_label
     )
     if pins_matched < total_pins:
         return None
     prefs_matched = sum(
-        1 for c in constraints if c.kind == "prefer" and result.get(c.item_name) == c.slot_label
+        1 for c in constraints
+        if c.kind == "prefer" and result_by_norm_name.get(_norm_name(c.item_name)) == c.slot_label
     )
     return SeedResult(seed=seed, pins_matched=pins_matched, prefs_matched=prefs_matched,
                        placement=dict(result))
@@ -799,11 +807,12 @@ class CpuSearchBackend:
 
 
 if __name__ == "__main__":
-    import glob
     import time
+    from pathlib import Path
+    from dump_utils import newest_dump_file
 
-    dumps_dir = "dumps"
-    cfg_path = sorted(glob.glob(f"{dumps_dir}/config_*.json"))[-1]
+    dumps_dir = Path(__file__).parent / "dumps"
+    cfg_path = str(newest_dump_file(dumps_dir, "config_*.json"))
     print(f"Using config: {cfg_path}")
     cfg = load_config(cfg_path)
 

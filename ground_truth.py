@@ -5,11 +5,12 @@ Used as the acceptance test for a simulator.
 """
 
 import json
-import glob
 import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple, Optional
+
+from dump_utils import newest_dump_file
 
 
 class Slot(NamedTuple):
@@ -38,7 +39,7 @@ def load_dumps(config_path: Optional[str] = None, placement_path: Optional[str] 
     """
     Load config and placement JSON dumps.
 
-    If paths not provided, uses newest files by filename sort from dumps directory.
+    If paths not provided, uses the most recently modified files in the dumps directory.
 
     Returns:
         (cfg dict, placement dict)
@@ -46,16 +47,10 @@ def load_dumps(config_path: Optional[str] = None, placement_path: Optional[str] 
     dumps_dir = Path(__file__).parent / "dumps"
 
     if not config_path:
-        config_files = sorted(dumps_dir.glob("config_*.json"))
-        if not config_files:
-            raise FileNotFoundError(f"No config_*.json files found in {dumps_dir}")
-        config_path = str(config_files[-1])
+        config_path = str(newest_dump_file(dumps_dir, "config_*.json"))
 
     if not placement_path:
-        placement_files = sorted(dumps_dir.glob("placement_*.json"))
-        if not placement_files:
-            raise FileNotFoundError(f"No placement_*.json files found in {dumps_dir}")
-        placement_path = str(placement_files[-1])
+        placement_path = str(newest_dump_file(dumps_dir, "placement_*.json"))
 
     with open(config_path) as f:
         cfg = json.load(f)

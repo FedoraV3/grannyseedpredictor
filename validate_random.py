@@ -9,7 +9,7 @@ re_random_validation.md).
 Usage:
     python validate_random.py <path-to-oracle_output.txt>
 
-If no path is given, defaults to ORACLE_PATH below.
+If no path is given, defaults to oracle_output.txt next to this script.
 
 The oracle file format (produced by Program.cs) is a sequence of blocks:
 
@@ -41,10 +41,7 @@ from net_random import NetRandom
 
 COUNT = 20
 
-DEFAULT_ORACLE_PATH = (
-    r"C:\Users\ir0n1c\AppData\Local\Temp\claude\C--Users-ir0n1c-grannyseedpredictor"
-    r"\cb0b7714-559d-4a3a-be99-f24a34d3393e\scratchpad\RandomOracle\oracle_output.txt"
-)
+DEFAULT_ORACLE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "oracle_output.txt")
 
 
 def parse_oracle(path):
@@ -94,12 +91,14 @@ def main():
     blocks = parse_oracle(oracle_path)
 
     mismatches = []
+    missing_labels = []
     total_compared = 0
 
     def check_int_block(label, method):
         nonlocal total_compared
         if label not in blocks:
             print(f"WARNING: label '{label}' missing from oracle output; skipping")
+            missing_labels.append(label)
             return
         for seed, values in blocks[label].items():
             rnd = NetRandom(seed)
@@ -114,6 +113,7 @@ def main():
         nonlocal total_compared
         if label not in blocks:
             print(f"WARNING: label '{label}' missing from oracle output; skipping")
+            missing_labels.append(label)
             return
         for seed, values in blocks[label].items():
             rnd = NetRandom(seed)
@@ -140,10 +140,13 @@ def main():
 
     print(f"Total values compared: {total_compared}")
     print(f"Mismatches: {len(mismatches)}")
+    if missing_labels:
+        print(f"Missing labels (not compared at all): {missing_labels}")
     if mismatches:
         print("\nFirst mismatches:")
         for label, seed, i, expected, actual in mismatches[:50]:
             print(f"  [{label}] seed={seed} index={i} expected={expected!r} actual={actual!r}")
+    if mismatches or missing_labels:
         print("\nRESULT: FAIL")
         sys.exit(1)
     else:

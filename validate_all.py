@@ -260,7 +260,9 @@ def main() -> int:
     print()
     print("=" * 80)
     total = len(results)
-    if skipped_count > 0:
+    if passed_count == 0:
+        print(f"NO SAMPLES VALIDATED ({skipped_count} SKIPPED, {failed_count} FAILED, 0 PASSED)")
+    elif skipped_count > 0:
         print(f"{passed_count} OF {total} SAMPLE(S) PASSED ({skipped_count} SKIPPED, {failed_count} FAILED)")
     elif failed_count == 0:
         print(f"ALL {total} SAMPLE(S) PASSED")
@@ -268,8 +270,10 @@ def main() -> int:
         print(f"{failed_count} OF {total} SAMPLE(S) FAILED")
     print("=" * 80)
 
-    # Exit code: 0 only if all (non-skipped) samples passed
-    return 0 if failed_count == 0 else 1
+    # Exit code: 0 only if nothing failed AND at least one sample was
+    # actually validated -- an all-SKIPPED run has not proven anything and
+    # must not report success.
+    return 0 if failed_count == 0 and passed_count > 0 else 1
 
 
 if __name__ == "__main__":

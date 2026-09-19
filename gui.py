@@ -62,6 +62,7 @@ import seed_registry
 import gpu_backend
 import variants
 from simulator import load_config
+from dump_utils import newest_dump_file
 
 
 def _format_duration(seconds: float) -> str:
@@ -138,10 +139,7 @@ def _variant_ingame_instruction(variant_name: str) -> str:
 
 def _newest_config_path() -> str:
     dumps_dir = Path(__file__).parent / "dumps"
-    files = sorted(dumps_dir.glob("config_*.json"))
-    if not files:
-        raise FileNotFoundError(f"No config_*.json files found in {dumps_dir}")
-    return str(files[-1])
+    return str(newest_dump_file(dumps_dir, "config_*.json"))
 
 
 def build_slot_catalog(config: dict) -> list[tuple[str, str]]:
@@ -473,7 +471,19 @@ class SeedPredictorApp:
 
         def _on_mousewheel(event):
             canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        # Only hijack the global <MouseWheel> binding while the pointer is
+        # actually over this canvas, and release it on leave -- otherwise a
+        # permanent bind_all steals wheel events from every other scrollable
+        # widget in the app (dialog listboxes, treeviews).
+        def _bind_mousewheel(_event=None):
+            canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        def _unbind_mousewheel(_event=None):
+            canvas.unbind_all("<MouseWheel>")
+
+        canvas.bind("<Enter>", _bind_mousewheel)
+        canvas.bind("<Leave>", _unbind_mousewheel)
 
         self.rows: dict[str, ItemRow] = {}
         self._rebuild_item_table()
@@ -674,10 +684,17 @@ class SeedPredictorApp:
         self._rebuild_for_variant(self.variant_var.get())
 
     def _rebuild_for_variant(self, display_name: str):
+        # The Combobox's bound variable is already showing `display_name`
+        # (Tkinter updates it before firing <<ComboboxSelected>>), so on
+        # failure we must explicitly roll it back to the variant `self.config`
+        # still actually reflects -- otherwise the dropdown shows the failed
+        # selection while every other panel keeps showing the old variant.
+        previous_name = self.config.get("variantName", display_name) if self.config else display_name
         try:
             new_config = variants.load_variant_config(display_name)
         except Exception as e:
             messagebox.showerror("Failed to load house version", str(e))
+            self.variant_var.set(previous_name)
             return
         self.variant_var.set(display_name)
         self.config = new_config
