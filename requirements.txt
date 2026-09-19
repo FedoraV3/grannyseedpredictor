@@ -1,0 +1,8 @@
+# Core dependency - required.
+numpy>=1.24
+
+# Optional: OpenCL GPU acceleration (gpu_backend.py + kernel.cl).
+# The tool works without it, just much slower (CPU multiprocessing fallback).
+# install.bat installs this on a best-effort basis and will not fail if it
+# cannot be built/installed for your platform.
+pyopencl>=2023.1

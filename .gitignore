@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+backups/
+dumps/
+logs/
+mod/bin/
+mod/obj/

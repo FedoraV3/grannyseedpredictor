@@ -1,0 +1,267 @@
+
+[[IDA:SeedManager_GeneratePlacement_GameSeedRead_0x18024f770]]
+Function: SeedManager$$GeneratePlacement @ 0x18024f770
+Relevant disasm slice (seed-acquisition prologue, addresses 0x18024fb80-0x18024fd16):
+  lea rcx, StringLiteral_6078 ("GameSeed")      ; interned at fn entry
+  lea rcx, StringLiteral_2252 ("RandomSeed")    ; interned at fn entry
+  call SeedManager$$SaveOriginalStates
+  ; --- RandomSeed pref check ---
+  xor edx, edx
+  mov rcx, cs:StringLiteral_2252          ; key = "RandomSeed"
+  call UnityEngine_PlayerPrefs$$GetInt_6449952640
+  cmp eax, 1
+  jnz short loc_18024FC87
+  cmp [rsi+44h], r15b                     ; this->RandomizeSeed (Inspector bool field, offset 0x44)
+  jz short loc_18024FC87
+  ; RandomSeed pref==1 AND RandomizeSeed field !=0 -> ignore GameSeed, use random fallback
+  xor r8d, r8d
+  mov edx, 3B9AC9FFh                      ; maxExclusive = 999999999
+  xor ecx, ecx                            ; minInclusive = 0
+  call UnityEngine_Random$$RandomRangeInt
+  jmp short loc_18024FC95
+loc_18024FC87:
+  xor edx, edx
+  mov rcx, cs:StringLiteral_6078          ; key = "GameSeed"
+  call UnityEngine_PlayerPrefs$$GetInt_6449952640
+loc_18024FC95:
+  mov [rsi+40h], eax                      ; this->Seed = result
+  ...
+  lea edx, [rbx+r14]                      ; Seed + attemptCounter (retry loop, up to 50 attempts)
+  call System_Random$$_ctor_6447071440    ; this->rnd = new System.Random(Seed + attempt)
+  mov [rsi+50h], rdi
+
+CONCLUSION: GeneratePlacement is a pure READER of both "GameSeed" and "RandomSeed" PlayerPrefs keys.
+It never calls PlayerPrefs.SetInt on either key. The only way it bypasses the "GameSeed" value is if
+BOTH RandomSeed pref==1 AND the SeedManager component's serialized RandomizeSeed field (offset+0x44,
+set in the Unity Editor per-scene/prefab, not visible in GameAssembly.dll) is non-zero, in which case a
+fresh UnityEngine.Random.RandomRangeInt(0,999999999) is used instead of the stored seed.
+Field layout confirmed: SeedManager.Seed = this+0x40 (int), SeedManager.RandomizeSeed = this+0x44 (bool),
+SeedManager.rnd = this+0x50 (System.Random).
+
+[[IDA:MenuSeed_Update_GameSeedWrite_0x180249fa0]]
+Function: Menu_Seed$$Update @ 0x180249fa0 (pseudocode, decompiled via Hex-Rays)
+void Menu_Seed__Update(Menu_Seed_o *this, const MethodInfo *method)
+{
+  ...
+  UnityEngine_PlayerPrefs__SetInt(key: StringLiteral_2252 /*"RandomSeed"*/, value: RandomToggle->fields.m_IsOn, method: nullptr); // EVERY FRAME
+  UnityEngine_PlayerPrefs__Save(method: nullptr);                                                                                // EVERY FRAME
+  if ( !this->fields.IsTypingSeed ) { ...SetActive(SavingOrNo,false); return; }
+  if ( UnityEngine_Input__GetKeyDown(key: 13, method: nullptr) || UnityEngine_Input__GetKeyDown(key: 27, method: nullptr) )
+  {
+    this->fields.IsTypingSeed = false;
+    ...
+    v7 = System_String__Trim(this: SeedInput->fields.m_Text, method: nullptr);
+    result = 0;
+    if ( !System_String__IsNullOrEmpty(value: v7, method: nullptr) )
+      System_Int32__TryParse(s: v7, &result, method: nullptr);
+    UnityEngine_PlayerPrefs__SetInt(key: this->fields.SeedPrefKey /* == "GameSeed" */, value: result, method: nullptr);
+    UnityEngine_PlayerPrefs__Save(method: nullptr);
+    UnityEngine_UI_Selectable__set_interactable(this: SeedInput, value: false, method: nullptr);
+  }
+  ...
+}
+NOTE: SeedPrefKey field is set once in Menu_Seed..ctor (0x18024a100) to StringLiteral_6078 ("GameSeed").
+This Update() writes RandomSeed unconditionally every frame the Menu_Seed GameObject is active/enabled,
+and writes GameSeed=int.TryParse(trimmed input text, default 0) only when the player is in "typing" mode
+and presses Enter or Escape.
+
+[[IDA:MenuSeed_ExitTypingModeAndSave_GameSeedWrite_0x180249e00]]
+Function: Menu_Seed$$ExitTypingModeAndSave @ 0x180249e00 (pseudocode)
+void Menu_Seed__ExitTypingModeAndSave(Menu_Seed_o *this, const MethodInfo *method)
+{
+  this->fields.IsTypingSeed = false;
+  UnityEngine_Cursor__set_visible(true); UnityEngine_Cursor__set_lockState(2);
+  v5 = System_String__Trim(this: SeedInput->fields.m_Text, method: nullptr);
+  result = 0;
+  if ( !System_String__IsNullOrEmpty(value: v5, method: nullptr) )
+    System_Int32__TryParse(s: v5, &result, method: nullptr);
+  UnityEngine_PlayerPrefs__SetInt(key: this->fields.SeedPrefKey /* "GameSeed" */, value: result, method: nullptr);
+  UnityEngine_PlayerPrefs__Save(method: nullptr);
+  UnityEngine_UI_Selectable__set_interactable(this: SeedInput, value: false, method: nullptr);
+}
+Xrefs to this function are ONLY IL2CPP metadata table entries (0x180c1fc28, 0x180b99b64/74, 0x180fb1650) --
+no direct call-site in any other IL2CPP method body. This means it is invoked through Unity's managed
+event/delegate system (almost certainly wired in the Inspector to TMP_InputField's OnEndEdit or OnDeselect
+UnityEvent on the Seed input field), not via a static call visible to xrefs_to.
+
+[[IDA:MainMenu_Start_FirstRunDefaults_0x180221541]]
+Function: MainMenu$$Start @ 0x180220e70, first-run/version-migration block starting at 0x180221541
+Gate: PlayerPrefs.GetInt(StringLiteral_1136) == 0  -> apply defaults once, then SetInt(StringLiteral_1136,1)
+Defaults block includes (partial disasm, 0x180221b1e-0x180221c9e):
+  SetInt(StringLiteral_1136, 1)
+  SetInt(StringLiteral_5260, 1)
+  SetInt(StringLiteral_5748, 1)
+  SetInt(StringLiteral_941, 0)
+  SetInt(StringLiteral_589, 1)
+  SetInt(StringLiteral_4166 /*"CURVERSION"*/, 8)
+  SetInt(StringLiteral_2207, 3)
+  SetInt(StringLiteral_1523, 1)
+  SetInt(StringLiteral_2252 /*"RandomSeed"*/, 1)
+  SetInt(StringLiteral_2904, 0)
+  SetString(StringLiteral_2129 /*"PrimaryInt_KEY"*/, StringLiteral_5388)
+  SetString(StringLiteral_2665, StringLiteral_5736)
+  SetString(StringLiteral_5376, StringLiteral_2982)
+  SetString(StringLiteral_4984, StringLiteral_4025)
+  SetString(StringLiteral_5545, StringLiteral_957)
+This block sets "RandomSeed"=1 (default toggle ON) whenever the CURVERSION migration flag (StringLiteral_1136)
+is not yet set for the current game version (8). It NEVER writes "GameSeed". Does not explain a GameSeed
+value change by itself, only a possible reset of the RandomSeed toggle default across version upgrades.
+CORRECTION (see VersionControl entries below): this SetInt(CURVERSION, 8) here is a DEFAULT-VALUE WRITE only
+(runs once per install/version-bump, gated by a SEPARATE flag StringLiteral_1136, not by CURVERSION itself).
+It does NOT mean CURVERSION is merely a migration flag overall -- CURVERSION is actively READ elsewhere
+(VersionControl.Start, VersionControlItemChange.Start) to drive real runtime branching. Two different
+PlayerPrefs keys are involved: StringLiteral_1136 is the "have defaults been applied for this build" flag;
+StringLiteral_4166 ("CURVERSION") is the actual house-version selector value that MainMenu.Start merely
+seeds with a default of 8 the first time it runs.
+
+[[IDA:PlayerPrefs_SeedKeys_XrefSummary]]
+xrefs_to("GameSeed" StringLiteral_6078 @ 0x180c4e0b0): ONLY 2 functions reference it:
+  - Menu_Seed$$.ctor @ 0x18024a100 (sets this->SeedPrefKey = "GameSeed"; does not call Get/SetInt itself)
+  - SeedManager$$GeneratePlacement @ 0x18024f770 (GetInt read only, confirmed above)
+xrefs_to("RandomSeed" StringLiteral_2252 @ 0x180c39198): 3 functions reference it:
+  - MainMenu$$Start @ 0x180220e70 (writes default RandomSeed=1 once per version, see above)
+  - Menu_Seed$$Start @ 0x180249eb0 (reads RandomSeed to set toggle.isOn UI state)
+  - Menu_Seed$$Update @ 0x180249fa0 (writes RandomSeed every frame from toggle.isOn)
+  - SeedManager$$GeneratePlacement @ 0x18024f770 (reads RandomSeed to decide fallback)
+No other PlayerPrefs key containing "Seed" was found anywhere in GameAssembly.dll (checked via string/comment
+search across the whole binary and via dump.cs). "ItemSeedData" is an unrelated per-object component type
+(used for individually seeded pickup items, not a global PlayerPrefs key). "Seed :" (StringLiteral_2677,
+used in Paused$$Update) is a UI label string for displaying the current seed in the pause menu (read-only
+display of SeedManager.Seed field, not a PlayerPrefs write).
+No "SeedSystemManager" class/type exists anywhere in dump.cs or in the IDA function list -- there is exactly
+ONE SeedManager class (TypeDefIndex 2503) in the whole assembly, not 10 variants. No "CURVERSION" literal
+usage was found governing SeedManager selection; CURVERSION (StringLiteral_4166) is only used as a simple
+version-migration flag in MainMenu.Start to decide whether to re-apply default PlayerPrefs once.
+SavedVariables/VariablesAsset (Unity Visual Scripting) classes exist (TypeDefIndex 4490/4491/4497) but no
+xref from any Seed-related string or SeedManager code path touches them; no evidence a seed is stored there.
+
+*** SUPERSEDED BY RE-VERIFICATION BELOW (see [[IDA:VersionControl_CURVERSION_Verified]]) ***
+The claim above that "CURVERSION ... is only used as a simple version-migration flag in MainMenu.Start" is
+WRONG. CURVERSION is actively GetInt-read (not just SetInt-written-once) in VersionControl$$Start (0x180214fd0)
+and VersionControlItemChange$$Start (0x18022c620), where it drives real branching over 9 values (0..8) that
+toggle GameObjects and reposition Transforms. See below for full detail. The "SeedSystemManager has 10
+variants, no code selects one" conclusion is corroborated (still true, see below), but the reasoning that
+CURVERSION is inert is false -- CURVERSION is a live, actively-read PlayerPrefs int, just not one that is
+proven (via static analysis) to control SeedManager/SeedSystemManager selection specifically.
+
+[[IDA:VersionControl_CURVERSION_Verified]]
+Investigation performed 2026-09-18 to resolve contradiction between re_scene_data.md and v1.0_CONCLUSION.md
+regarding VersionControl / CURVERSION / SeedSystemManager selection.
+
+1. VersionControl class EXISTS (contra v1.0_CONCLUSION.md section 4's implicit denial). Methods:
+   - VersionControl$$RemoveNavGrandpa   @ 0x180214e10 (size 0xe0)
+   - VersionControl$$RemoveNavGranny    @ 0x180214ef0 (size 0xe0)
+   - VersionControl$$Start              @ 0x180214fd0 (size 0x27e0, ~123KB decompiled pseudocode, 540 basic blocks)
+   - VersionControl.__c__DisplayClass73_0$$_RemoveNavGrandpa_b__0 @ 0x18022c0a0 (predicate lambda)
+   - VersionControl.__c__DisplayClass74_0$$_RemoveNavGranny_b__0  @ 0x18022c130 (predicate lambda)
+   VersionControlItemChange class ALSO EXISTS:
+   - VersionControlItemChange$$Start    @ 0x18022c620 (size 0x1d0)
+
+2. VersionControl_Fields (offset 0x10 in VersionControl_o, total object size 624 bytes) contains, among ~70
+   serialized fields (doors, water boxes, AI refs, nav transform arrays, etc.), EXACTLY the array fields
+   re_scene_data.md claimed:
+     DisableOneSixObjects   @ +0x108  (UnityEngine_GameObject_array*)
+     DisableOneFiveObjects  @ +0x110  (UnityEngine_GameObject_array*)
+     DisableOneFourObjects  @ +0x118  (UnityEngine_GameObject_array*)
+     DisableOneThreeObjects @ +0x120  (UnityEngine_GameObject_array*)
+     DisableOneTwoObjects   @ +0x128  (UnityEngine_GameObject_array*)
+   VersionControl$$Start iterates and SetActive(false) each element of these arrays inside specific
+   CURVERSION-value branches (confirmed by decompilation, see point 3). This directly VERIFIES
+   re_scene_data.md's claim of DisableOneSixObjects/DisableOneFiveObjects fields -- they are real,
+   present in the compiled type layout, and actively used.
+
+3. VersionControl$$Start (0x180214fd0) reads PlayerPrefs.GetInt("CURVERSION") -- StringLiteral_4166 @
+   0x180c43130 -- REPEATEDLY (10 separate PlayerPrefs.GetInt_6449952640(StringLiteral_4166) call sites),
+   with an if/elseif ladder over the literal integer values 0,1,2,3,4,5,6,7,8 (9 branches; a final
+   PlayerPrefs.GetInt("Extras") check follows, StringLiteral_5730 @ 0x180c4baa0). Each branch calls
+   UnityEngine.GameObject.SetActive(...) on various house-object fields (SpiderHatch, Door, DoorAttic,
+   CodesBatterys, WBox1/WBox2, RemotePart1/RemotePart2, Grid17, AtticTree, the DisableOneXObjects arrays,
+   etc.), sets AI nav-point overrides (ST->S1/S2 = W1/W2 audio clips; GrandpaSpawnPos/NewGrandpaNav fields),
+   and calls RemoveNavGrandpa/RemoveNavGranny to strip waypoints. This is unambiguously a "house version"
+   configuration switch keyed on CURVERSION with 9 distinct configurations (values 0..8).
+   Disasm confirmation (function prologue, StringLiteral interning, 0x180214fd0-0x1802150aa):
+     lea rcx, StringLiteral_4166 ; "CURVERSION"   (interned alongside "Nav4","WindowNoBackyard","SmallDoor",
+                                                     "BYDoorUnable","GridUnableToUse","Nav8","Nav16",
+                                                     "MeatDoorUnavailable","Nav12","Nav11","Extras","Nav15")
+   Sample branch bodies (Hex-Rays pseudocode, PlayerPrefs.GetInt_6449952640 == UnityEngine.PlayerPrefs.GetInt):
+     if ( UnityEngine_PlayerPrefs__GetInt_6449952640(StringLiteral_4166, nullptr) == 0 ) {
+         SetActive(SpiderHatch,false); SetActive(Door,...); ... }
+     if ( UnityEngine_PlayerPrefs__GetInt_6449952640(StringLiteral_4166, nullptr) == 1 ) {
+         ST->S1 = W1; ST->S2 = W2; ... }
+     ... (values 2..7 similarly gated, each configuring a different subset of house objects) ...
+     if ( UnityEngine_PlayerPrefs__GetInt_6449952640(StringLiteral_4166, nullptr) == 8 ) {
+         SetActive(Grid17,false); SetActive(Gr[andpa?]...,...); ... }
+     LABEL_441: if ( UnityEngine_PlayerPrefs__GetInt_6449952640(StringLiteral_5730 /*"Extras"*/, nullptr) != 0 )
+         return;
+     SetActive(AtticTree,false);
+
+4. VersionControlItemChange$$Start (0x18022c620) VERIFIES re_scene_data.md's VersionPlayerPrefs1/2/3 claim
+   exactly. VersionControlItemChange_Fields (40 bytes) layout:
+     VersionPlayerPrefs1 @ +0x10 (int32_t)
+     VersionPlayerPrefs2 @ +0x14 (int32_t)
+     VersionPlayerPrefs3 @ +0x18 (int32_t)
+     ObjectsToReposition @ +0x20 (UnityEngine_Transform_array*)
+   Decompiled logic:
+     if ( PlayerPrefs.GetInt("FlashL") == 0                                   // StringLiteral_5882 @ 0x180c4cb40
+       && (PlayerPrefs.GetInt("CURVERSION") == this->VersionPlayerPrefs1      // StringLiteral_4166 @ 0x180c43130
+        || PlayerPrefs.GetInt("CURVERSION") == this->VersionPlayerPrefs2
+        || PlayerPrefs.GetInt("CURVERSION") == this->VersionPlayerPrefs3) )
+     {
+       foreach (Transform t in ObjectsToReposition)
+         t.position = this.transform.position;   // and t.rotation = this.transform.rotation
+     }
+   This is a per-GameObject-instance component (multiple copies likely exist in the scene, each with its own
+   VersionPlayerPrefs1/2/3 Inspector values) that snaps a set of item Transforms to this object's own
+   transform IF the current CURVERSION matches one of the 3 configured version numbers. This is a targeted
+   "move this item to its house-version-specific spot" mechanism, driven directly by CURVERSION.
+
+5. CONTRADICTION RESOLUTION: re_scene_data.md is CORRECT that VersionControl/VersionControlItemChange/
+   DisableOneSixObjects/DisableOneFiveObjects/VersionPlayerPrefs1-3 all exist and are wired to CURVERSION.
+   v1.0_CONCLUSION.md section 4 is WRONG to say "CURVERSION is merely an unrelated defaults-migration flag" --
+   that description only applies to the ONE write site in MainMenu.Start (0x180221541 area) which SETS
+   CURVERSION=8 as a one-time default. CURVERSION is a live, multi-consumer PlayerPrefs int that is actively
+   READ at runtime by VersionControl.Start and VersionControlItemChange.Start to configure which "house
+   version" (structural layout, 9 values 0-8) is active.
+
+6. HOWEVER: v1.0_CONCLUSION.md's narrower claim that "no code selects a SeedSystemManager variant" appears
+   to still hold under this deeper investigation, with an important caveat -- see below. CURVERSION governs
+   the HOUSE geometry/decor version (VersionControl class), which is a DIFFERENT axis from the
+   SeedSystemManager_1.0.../_Normal/_More item-puzzle-config GameObjects:
+     - No string "SeedSystemManager" (or "SeedManager" outside the SeedManager class itself) appears anywhere
+       in GameAssembly.dll (checked via find_regex and find(type=string) across the whole binary).
+     - SeedManager_Fields (the class's own serialized+runtime fields, 112 bytes) contains NO reference to
+       VersionControl, CURVERSION, or any array of GameObjects/SeedManager instances. It only has
+       allItems/puzzleDefs/requiredEscapeItemNames/spawnAreas/Seed/RandomizeSeed/etc (item-placement state).
+     - VersionControl_Fields (72 members) contains NO field of type SeedManager_o*, no field named
+       "SeedSystem*" or holding an array of 10 GameObjects, and VersionControl$$Start's decompiled logic
+       (full 123,205-char pseudocode scanned) contains ZERO occurrences of "SeedManager" or "SeedSystem".
+     - ObjectsManager$$Start (0x18022e7b0, 11072 bytes, 540 basic blocks) -- the other large "Start" method
+       with heavy PlayerPrefs usage (52 refs) -- also contains ZERO occurrences of "SeedManager"/"SeedSystem"/
+       "CURVERSION"/"Version" in its decompiled body; its PlayerPrefs traffic is for random item-position
+       persistence (vase/picture spot placement), unrelated to variant selection.
+     - SeedManager$$Awake calls only BuildLookup; SeedManager$$Start calls only GeneratePlacement. Both are
+       standard Unity lifecycle methods invoked automatically by the engine on whichever SeedSystemManager_X
+       GameObject/component instance happens to be active+enabled in the scene at load time -- there is no
+       IL2CPP code that calls SeedManager$$Start/Awake directly (xrefs_to shows only the IL2CPP method-table
+       data-xrefs used for virtual/reflection dispatch, no code call sites).
+   CONCLUSION: static analysis of GameAssembly.dll finds NO code path that reads a PlayerPrefs key (or any
+   other persisted value) and then calls GameObject.SetActive(true) on one of the 10 SeedSystemManager_*
+   GameObjects, nor any manager holding a serialized array of those 10 objects. If exactly one is active at
+   runtime, the selection is either (a) baked directly into the level1 scene's serialized m_IsActive flags
+   at author/build time (i.e. a per-release Unity Editor decision, not a runtime PlayerPrefs branch), or
+   (b) performed by some Unity-side mechanism (Animator, Timeline, UnityEvent wired purely through the
+   Inspector with no corresponding call visible via static IL2CPP xrefs, similar to how
+   Menu_Seed$$ExitTypingModeAndSave is invoked only through IL2CPP metadata/event tables). This could NOT be
+   further resolved through static analysis alone -- EXPLICITLY FLAGGED AS UNDETERMINED, not guessed.
+
+7. No PlayerPrefs key resembling "VersionPlayerPrefs", "HouseVersion", or "GameVersion" (as literal string
+   content) exists anywhere in the binary; "VersionPlayerPrefs1/2/3" are C# field NAMES on
+   VersionControlItemChange (serialized ints holding arbitrary version numbers set per-instance in the
+   Inspector), not PlayerPrefs KEY STRINGS. The only actual PlayerPrefs key string tying to "version" is
+   "CURVERSION" (StringLiteral_4166 @ 0x180c43130).
+
+8. No analogous "Menu_Version" (or similarly named) UI class exists. list_funcs filter "Menu_*" returns only
+   the Menu_Seed class (BeginTypingSeed/ExitTypingModeAndSave/Start/Update/.ctor @ 0x180249d30-0x18024a100).
+   There is no in-game UI discovered that writes to "CURVERSION" -- the only SetInt("CURVERSION", ...) call
+   site found in the whole binary is the MainMenu.Start first-run-defaults block (writes the constant 8,
+   once, gated by a separate migration-flag key StringLiteral_1136, not by user choice).
