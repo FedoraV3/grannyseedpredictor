@@ -14,10 +14,18 @@ import simulator
 TEST_SEED = 915074960
 
 
+def _capture_stamp(filename: str) -> str:
+    """Extract the full `YYYYMMDD_HHMMSS_fff` capture stamp written into
+    every dump filename by the SeedDumper mod."""
+    m = re.search(r"(20\d{6}_\d{6}_\d{3})", filename)
+    assert m, f"Could not extract capture timestamp from {filename}"
+    return m.group(1)
+
+
 def _dump_pair_for_seed(seed: int) -> tuple[str, str]:
     """Find the specific config/placement dump pair this acceptance test
-    validates against, matched by seed then by their shared capture
-    timestamp (same technique as validate_all.py's discover_pairs).
+    validates against: the newest placement captured for `seed`, together
+    with the config captured immediately before it.
 
     Deliberately does NOT use "the newest dump in dumps/": that directory
     accumulates captures from later, unrelated dev/test sessions (different
@@ -38,15 +46,27 @@ def _dump_pair_for_seed(seed: int) -> tuple[str, str]:
         raise FileNotFoundError(f"No placement_{seed}_*.json found in {dumps_dir}")
     placement_path = placements[-1]
 
-    ts_match = re.search(r"(20\d{6}_\d{6})", placement_path.name)
-    assert ts_match, f"Could not extract capture timestamp from {placement_path.name}"
-    ts = ts_match.group(1)
-    configs = [c for c in dumps_dir.glob("config_*.json") if ts in c.name]
-    if not configs:
+    # The mod dumps the config on the way into GeneratePlacement and the
+    # placement on the way out, so a pair never shares a millisecond -- the
+    # right config is the newest one captured at or before this placement.
+    # Matching on the second alone (as validate_all.py's discover_pairs does)
+    # is ambiguous whenever two GeneratePlacement calls land in the same
+    # second, and would then pick an arbitrary one of them; it also misses a
+    # pair that straddles a second boundary. Stamps are fixed width, so a
+    # lexicographic comparison is a chronological one.
+    placement_stamp = _capture_stamp(placement_path.name)
+    earlier = [
+        (stamp, c)
+        for stamp, c in ((_capture_stamp(c.name), c) for c in dumps_dir.glob("config_*.json"))
+        if stamp <= placement_stamp
+    ]
+    if not earlier:
         raise FileNotFoundError(
-            f"No config_*.json matching capture timestamp {ts} (for seed {seed}) in {dumps_dir}"
+            f"No config_*.json captured at or before {placement_stamp} "
+            f"(for seed {seed}) in {dumps_dir}"
         )
-    return str(configs[0]), str(placement_path)
+    config_path = max(earlier, key=lambda pair: pair[0])[1]
+    return str(config_path), str(placement_path)
 
 
 def test_simulate_matches_ground_truth():
