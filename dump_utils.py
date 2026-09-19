@@ -1,11 +1,11 @@
 """
 Shared helper for locating the most recently captured dump file.
 
-Dump filenames are `{name}_{seed}_{timestamp}.json` (see
-mod/src/SeedManagerPatch.cs), where `seed` is a variable-width number that
-sorts BEFORE the timestamp. A plain lexicographic sort on the filename is
-therefore not chronological order: e.g. "config_10000_..." sorts before
-"config_9999_..." because '1' < '9', even when the 10000 dump was captured
+Dump filenames are `{name}_{seed}_{timestamp}.json`, where `seed` is a
+variable-width number that sorts BEFORE the timestamp. A plain
+lexicographic sort on the filename is therefore not chronological order:
+e.g. "config_10000_..." sorts before "config_9999_..." because '1' < '9',
+even when the 10000 dump was captured
 later. Sort by modification time instead.
 """
 

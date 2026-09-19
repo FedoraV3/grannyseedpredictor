@@ -271,25 +271,21 @@ slider to (1.8) and enable the **Extras toggle**. The **Flash toggle**
 ## Regenerating scene dumps (`SeedDumper` mod)
 
 The simulator's config comes from a `config_<seed>_<timestamp>.json` dump
-produced by the `SeedDumper` MelonLoader mod (`mod/`), which observes
+produced by the `SeedDumper` MelonLoader mod, which observes
 (never alters) `SeedManager.GeneratePlacement` via a Harmony
 prefix/postfix patch. To regenerate a dump (e.g. after a game update
 changes the scene layout):
 
-1. Build the mod: `cd mod && dotnet build -c Release` (produces
-   `SeedDumper.dll`, also copied to the project root).
-2. Close the game, then copy `SeedDumper.dll` into the game's `Mods\`
-   folder (MelonLoader must already be installed).
-3. Launch the game and play until item placement happens (this runs once
+1. Close the game, then copy `SeedDumper.dll` (in the project root) into
+   the game's `Mods\` folder (MelonLoader must already be installed).
+2. Launch the game and play until item placement happens (this runs once
    per level load; you don't need to do anything special beyond loading a
    level that uses the randomizer).
-4. Two JSON files are written to `dumps/`: `config_<seed>_<ts>.json` (the
+3. Two JSON files are written to `dumps/`: `config_<seed>_<ts>.json` (the
    simulation input, written before placement runs) and
    `placement_<seed>_<ts>.json` (the resulting item positions, written
    after -- useful as ground truth for re-validating the simulator).
-5. Remove the mod by deleting `SeedDumper.dll` from `Mods\` when done.
-
-See `mod/README.md` for the full JSON schema and build/install details.
+4. Remove the mod by deleting `SeedDumper.dll` from `Mods\` when done.
 
 ## Project layout
 
@@ -306,7 +302,6 @@ See `mod/README.md` for the full JSON schema and build/install details.
 | `gui.py` | Tkinter front-end: version selector, constraint editor, backend selection, search, results, apply-seed flow |
 | `seed_registry.py` | Windows registry read/write for the game's `PlayerPrefs` seed value (experimental apply path) |
 | `ground_truth.py` | Ground-truth placement data used during simulator validation |
-| `mod/` | `SeedDumper` MelonLoader mod used to capture scene config + placement dumps from the real game |
 | `dumps/` | Captured `config_*.json` / `placement_*.json` dumps |
 | `scene_data.json` | Scene metadata for all 10 house versions extracted from the game's binary; source for `variants.py` |
 | `CLAUDE_FINDINGS.md`, `re_*.md` | Reverse-engineering notes and validation logs |

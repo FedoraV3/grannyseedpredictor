@@ -3,5 +3,4 @@ __pycache__/
 backups/
 dumps/
 logs/
-mod/bin/
-mod/obj/
+mod/
