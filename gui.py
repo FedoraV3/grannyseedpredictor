@@ -428,7 +428,7 @@ class SeedPredictorApp:
         backend_frame = tk.LabelFrame(self.root, text="Search backend")
         backend_frame.pack(fill="x", padx=8, pady=4)
         tk.Radiobutton(
-            backend_frame, text="GPU (OpenCL -- full 2^32 scan in ~12 min)",
+            backend_frame, text="GPU (OpenCL -- full scan in ~3 min)",
             variable=self.backend_choice, value="gpu", command=self._on_backend_change,
             state="normal" if self.gpu_available else "disabled",
         ).pack(side="left")
@@ -497,15 +497,15 @@ class SeedPredictorApp:
         self.range_choice = tk.StringVar(value="full" if self.gpu_available else "quick")
         tk.Radiobutton(range_frame, text="Quick scan (0 .. 100,000,000)", variable=self.range_choice,
                        value="quick").pack(side="left")
-        tk.Radiobutton(range_frame, text="Full 32-bit range", variable=self.range_choice,
+        tk.Radiobutton(range_frame, text="Full range (max 9 chars)", variable=self.range_choice,
                        value="full").pack(side="left")
         tk.Radiobutton(range_frame, text="Custom:", variable=self.range_choice,
                        value="custom").pack(side="left")
         self.custom_start_var = tk.StringVar(value="0")
         self.custom_end_var = tk.StringVar(value="100000000")
-        tk.Entry(range_frame, textvariable=self.custom_start_var, width=12).pack(side="left", padx=2)
+        tk.Entry(range_frame, textvariable=self.custom_start_var, width=10).pack(side="left", padx=2)
         tk.Label(range_frame, text="to").pack(side="left")
-        tk.Entry(range_frame, textvariable=self.custom_end_var, width=12).pack(side="left", padx=2)
+        tk.Entry(range_frame, textvariable=self.custom_end_var, width=10).pack(side="left", padx=2)
 
         tk.Label(range_frame, text="   Max results:").pack(side="left", padx=(12, 2))
         self.limit_var = tk.StringVar(value="50")
@@ -761,12 +761,12 @@ class SeedPredictorApp:
         if scanned_everything and num_pins >= 1:
             return (
                 f"No seed found. {feas} This search already covered the ENTIRE "
-                f"2^32 seed space, so no seed satisfies these exact pins in this "
+                f"9-character seed space, so no seed satisfies these exact pins in this "
                 f"game version -- remove at least one pin constraint and search again.")
         return (
             f"No seed found in this range. {feas} Try removing a pin constraint, "
-            f"widening the range, or (on the GPU backend) the full 32-bit range "
-            f"(~12 minutes) to search exhaustively.")
+            f"widening the range, or (on the GPU backend) the full range "
+            f"to search exhaustively.")
 
     # -- Backend selection --------------------------------------------------
 
@@ -831,6 +831,12 @@ class SeedPredictorApp:
             end = int(self.custom_end_var.get())
         except ValueError:
             messagebox.showerror("Invalid range", "Custom start/end must be integers.")
+            return None
+        if start < search.SEED_MIN or end > search.SEED_MAX:
+            messagebox.showerror(
+                "Invalid range",
+                f"Seeds are limited to 9 characters: start/end must be within "
+                f"{search.SEED_MIN} .. {search.SEED_MAX}.")
             return None
         if end < start:
             messagebox.showerror("Invalid range", "End must be >= start.")

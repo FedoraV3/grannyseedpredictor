@@ -74,8 +74,21 @@ class SeedResult:
 
 ProgressCb = Optional[Callable[[int, int, int], None]]  # (seeds_done, total, hits_found)
 
-DEFAULT_FULL_RANGE = (-2147483648, 2147483647)   # full signed int32 space
+# Seeds are capped at 9 characters (including a leading "-"), so the widest
+# allowed range is -99,999,999 .. 999,999,999.
+SEED_MIN = -99_999_999
+SEED_MAX = 999_999_999
+DEFAULT_FULL_RANGE = (SEED_MIN, SEED_MAX)        # full 9-character seed space
 DEFAULT_QUICK_RANGE = (0, 100_000_000)           # "quick scan" default
+
+
+def clamp_seed_range(seed_range: tuple[int, int]) -> tuple[int, int]:
+    """Clamp an inclusive seed range to [SEED_MIN, SEED_MAX] so no generated
+    seed exceeds 9 characters. Raises ValueError if the result is empty."""
+    start, end = max(seed_range[0], SEED_MIN), min(seed_range[1], SEED_MAX)
+    if end < start:
+        raise ValueError(f"Invalid seed_range: {seed_range}")
+    return (start, end)
 
 
 class SearchBackend(Protocol):
@@ -101,16 +114,16 @@ class SearchBackend(Protocol):
 # ---------------------------------------------------------------------------
 
 TOTAL_SLOTS = 87           # 71 free + 16 puzzle -- the "Normal" house variant
-SEED_SPACE = 2 ** 32       # full signed int32 range
+SEED_SPACE = SEED_MAX - SEED_MIN + 1   # full 9-character seed range
 
 
 def estimate_expected_matches(num_pins: int, total_slots: int = TOTAL_SLOTS) -> float:
-    """Rough expected number of matching seeds over the full 2**32 seed
+    """Rough expected number of matching seeds over the full 9-character seed
     space for `num_pins` PIN constraints.
 
     Model: treats each pin as an independent uniform choice over
     `total_slots` possible slots, giving expected_matches =
-    2**32 / total_slots**num_pins. This is a deliberately simplified
+    SEED_SPACE / total_slots**num_pins. This is a deliberately simplified
     ESTIMATE -- it ignores that puzzle slots have far fewer eligible
     candidate items than free slots (so real per-item entropy is lower than
     log2(total_slots) bits), and ignores correlations between items'
@@ -148,7 +161,7 @@ def feasibility_message(num_pins: int, total_slots: int = TOTAL_SLOTS) -> str:
                 f"a matching seed may not exist.")
     return (f"~{est:.3f} matching seeds expected (estimate) -- "
             f"{num_pins} pins is almost certainly IMPOSSIBLE. A matching seed "
-            f"almost certainly does not exist in the 2^32 seed space.")
+            f"almost certainly does not exist in the 9-character seed space.")
 
 
 def total_slots_for_config(config: dict) -> int:
@@ -734,9 +747,7 @@ class CpuSearchBackend:
         progress_cb: ProgressCb = None,
         cancel_evt: Any = None,
     ) -> list[SeedResult]:
-        start, end = seed_range
-        if end < start:
-            raise ValueError(f"Invalid seed_range: {seed_range}")
+        start, end = clamp_seed_range(seed_range)
         total = end - start + 1
 
         chunks = []

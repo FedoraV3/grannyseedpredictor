@@ -161,21 +161,21 @@ def write_seed(seed: int, *, also_disable_random: bool = True) -> None:
     """Write GameSeed to registry. Auto-backs up on first write in the process.
 
     Args:
-        seed: Signed 32-bit seed value to write.
+        seed: Seed value to write (max 9 characters).
         also_disable_random: If True, also set RandomSeed flag to 0 so the
                             game honours the fixed seed.
 
     Raises:
-        ValueError: If seed is outside signed 32-bit range.
+        ValueError: If seed is longer than 9 characters.
         FileNotFoundError: If the registry key doesn't exist.
     """
     global _backed_up
 
     # Validate seed range
-    if seed < -2147483648 or seed > 2147483647:
+    if seed < -99_999_999 or seed > 999_999_999:
         raise ValueError(
-            f"Seed {seed} is outside signed 32-bit range "
-            f"[-2147483648, 2147483647]"
+            f"Seed {seed} exceeds 9 characters; allowed range is "
+            f"[-99999999, 999999999]"
         )
 
     # Auto-backup on first write in this process

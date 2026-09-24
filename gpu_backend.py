@@ -618,7 +618,7 @@ class GpuSearchBackend:
         self,
         config: dict,
         constraints: list,
-        seed_range: tuple[int, int] = (-2147483648, 2147483647),
+        seed_range: tuple[int, int] = (-99_999_999, 999_999_999),
         limit: int = 200,
         progress_cb: ProgressCb = None,
         cancel_evt: Any = None,
@@ -627,9 +627,8 @@ class GpuSearchBackend:
             raise RuntimeError(f"GPU backend not available: {self._unavailable_reason}")
 
         layout = self._get_layout(config)
-        start, end = seed_range
-        if end < start:
-            raise ValueError(f"Invalid seed_range: {seed_range}")
+        import search
+        start, end = search.clamp_seed_range(seed_range)
         total = end - start + 1
 
         pin_mask, pin_target, unresolvable, total_pins = layout.build_pin_arrays(constraints)
