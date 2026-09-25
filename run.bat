@@ -1,7 +1,7 @@
 @echo off
 REM ===================================================================
 REM  Granny Legacy Seed Predictor - launcher
-REM  Starts the GUI with pythonw.exe (no console window) and then
+REM  Updates and starts the GUI with pythonw.exe (no console window) and then
 REM  closes this window immediately.
 REM  If the GUI does not appear, run run_debug.bat instead - it keeps
 REM  a console open and shows the error.
@@ -37,5 +37,6 @@ if not defined PYW (
     exit /b 1
 )
 
-start "" "%PYW%" "%~dp0gui.py"
-exit
+REM updater.py checks GitHub for a new version, installs it, then opens
+REM gui.py. "& exit" keeps this on one line: the update may rewrite this file.
+start "" "%PYW%" "%~dp0updater.py" & exit

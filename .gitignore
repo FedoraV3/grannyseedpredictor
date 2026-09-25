@@ -4,3 +4,4 @@ backups/
 dumps/
 logs/
 mod/
+.update_state.json

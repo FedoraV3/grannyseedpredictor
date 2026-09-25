@@ -164,6 +164,21 @@ you choose which version to generate seeds for. The feasibility estimates,
 pin ceiling, and item table all update based on your selection. Make sure
 the in-game Game Version matches the version you selected in the tool.
 
+### Automatic updates
+
+`run.bat` (and `run_debug.bat`) start `updater.py`, which checks GitHub for a
+new commit on `main` every time the program opens. If there is one, it
+downloads it (a `git clone`, or a ZIP download when git isn't installed),
+replaces the old program files with the new ones, and restarts into the new
+version. Your `dumps/`, `logs/` and other files the repo doesn't ship are
+never touched. If you're offline or anything goes wrong, the program just
+opens as it is; details are in `logs/updater.log`.
+
+If the folder is a git checkout, it is fast-forwarded instead, and only when
+it is on `main` with no uncommitted changes and no commits that aren't on
+GitHub. Starting `python gui.py` directly, passing `--no-update`, or setting
+`GSP_NO_UPDATE=1` skips the check.
+
 ## Using the tool
 
 1. For each item you care about, set its state to **Pin** (the seed is
