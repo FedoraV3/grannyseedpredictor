@@ -5,10 +5,10 @@ This is a regression suite: validates the simulator against every captured
 config/placement pair, not just the newest.
 """
 
-import json
-import re
 from pathlib import Path
 from typing import Optional, NamedTuple
+
+from dump_utils import capture_stamp, pair_dumps
 
 
 class ValidatePair(NamedTuple):
@@ -24,9 +24,10 @@ def discover_pairs(dumps_dir: str = "dumps") -> list[tuple[Path, Path, int]]:
     """
     Discover all (config, placement, seed) tuples from dumps directory.
 
-    Pairs config and placement files by matching YYYYMMDD_HHMMSS timestamp
-    component. For each config, finds the closest placement timestamp >= the
-    config's timestamp. If no placement found, config is skipped with a warning.
+    Pairing is dump_utils.pair_dumps: files are ordered by their own
+    capturedAtUtc, each placement goes with the config captured last before
+    it, and the pair must agree on callIndex and seed. Unpaired files are
+    skipped with a warning giving the reason.
 
     Args:
         dumps_dir: Path to dumps directory
@@ -42,56 +43,16 @@ def discover_pairs(dumps_dir: str = "dumps") -> list[tuple[Path, Path, int]]:
     if not dumps_path.exists():
         raise FileNotFoundError(f"Dumps directory not found: {dumps_path.absolute()}")
 
-    # Extract timestamp from filename: e.g., "config_99999_20260917_172110_489.json"
-    # Timestamp pattern: YYYYMMDD_HHMMSS (ignoring milliseconds)
-    # Use 20/21/22/... to avoid matching the seed portion
-    def extract_timestamp(filename: str) -> Optional[str]:
-        """Extract YYYYMMDD_HHMMSS from filename."""
-        match = re.search(r'(20\d{6}_\d{6})', filename)
-        return match.group(1) if match else None
-
-    # Load configs
-    config_files = sorted(dumps_path.glob("config_*.json"))
-    placement_files = sorted(dumps_path.glob("placement_*.json"))
-
-    if not config_files or not placement_files:
+    if not any(dumps_path.glob("config_*.json")) or not any(dumps_path.glob("placement_*.json")):
         raise FileNotFoundError(
             f"No config_*.json or placement_*.json files found in {dumps_path.absolute()}"
         )
 
-    # Build placement map: timestamp -> [(path, seed), ...]
-    placement_map: dict[str, list[tuple[Path, int]]] = {}
-    for pf in placement_files:
-        ts = extract_timestamp(pf.name)
-        if ts:
-            try:
-                with open(pf) as f:
-                    placement_data = json.load(f)
-                seed = placement_data.get("seed")
-                if seed is not None:
-                    if ts not in placement_map:
-                        placement_map[ts] = []
-                    placement_map[ts].append((pf, seed))
-            except (json.JSONDecodeError, IOError) as e:
-                print(f"WARNING: Failed to read placement {pf.name}: {e}")
-                continue
+    pairing = pair_dumps(dumps_path)
+    for path, reason in sorted(pairing.unpaired.items()):
+        print(f"WARNING: Skipping {path.name}: {reason}")
 
-    # Match configs to placements
-    pairs: list[tuple[Path, Path, int]] = []
-    for cf in config_files:
-        ts = extract_timestamp(cf.name)
-        if not ts:
-            print(f"WARNING: Could not extract timestamp from config {cf.name}")
-            continue
-
-        if ts in placement_map:
-            # Use first (and typically only) placement for this timestamp
-            placement_path, seed = placement_map[ts][0]
-            pairs.append((cf, placement_path, seed))
-        else:
-            print(f"WARNING: No matching placement found for config {cf.name} (timestamp {ts})")
-
-    return pairs
+    return [(p.config, p.placement, p.seed) for p in pairing.pairs]
 
 
 def validate_pair(config_path: Path, placement_path: Path, seed: int) -> ValidatePair:
@@ -209,8 +170,7 @@ def main() -> int:
 
     for seed, config_name, result in results:
         # Extract timestamp from config name
-        match = re.search(r'(\d{8}_\d{6})', config_name)
-        timestamp = match.group(1) if match else "???"
+        timestamp = capture_stamp(config_name) or "???"
 
         if result.error:
             # Check if it's an insufficient-data error (SKIPPED) or a real error
@@ -240,8 +200,7 @@ def main() -> int:
         print("=" * 80)
         for seed, config_name, result in results:
             if not result.passed:
-                match = re.search(r'(\d{8}_\d{6})', config_name)
-                timestamp = match.group(1) if match else "???"
+                timestamp = capture_stamp(config_name) or "???"
 
                 if result.error:
                     print()
