@@ -287,8 +287,9 @@ slider to (1.8) and enable the **Extras toggle**. The **Flash toggle**
 
 ### From the game files (no mod)
 
-Double-click `make_dump.bat` (or drag the game folder onto it). It finds
-Granny Legacy in your Steam libraries, reads the `level1` scene file with
+Double-click `make_dump.bat` and select the game's `.exe` (or the `level1`
+file in its `_Data` folder) in the file selector, or drag the game folder
+onto it. It reads the `level1` scene file with
 UnityPy (installed automatically), and writes
 `dumps/config_0_<timestamp>.json`, with real world positions computed from
 the scene's Transform hierarchy. The dump covers the `More` variant, whose

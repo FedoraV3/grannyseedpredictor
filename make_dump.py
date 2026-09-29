@@ -19,7 +19,7 @@ so variants.py finds a real position for every object of every variant.
 
 USAGE
 -----
-    python make_dump.py                      (finds the game in Steam)
+    python make_dump.py                      (opens a file selector)
     python make_dump.py "D:\\Games\\Granny Legacy"
     python make_dump.py "<...>\\Granny Legacy_Data\\level1" --variant Normal
 
@@ -30,7 +30,6 @@ import argparse
 import glob
 import json
 import os
-import re
 import sys
 from datetime import datetime, timezone
 
@@ -50,52 +49,41 @@ TRANSFORM_TYPES = ("Transform", "RectTransform")
 # Locating the game
 # ---------------------------------------------------------------------------
 
-def _steam_libraries() -> list:
-    roots = [
-        os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"), "Steam"),
-        os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "Steam"),
-        os.path.expanduser("~/.steam/steam"),
-        os.path.expanduser("~/.local/share/Steam"),
-    ]
-    libs = []
-    for root in roots:
-        if not os.path.isdir(root):
-            continue
-        libs.append(root)
-        vdf = os.path.join(root, "steamapps", "libraryfolders.vdf")
-        try:
-            with open(vdf, encoding="utf-8", errors="replace") as f:
-                for m in re.finditer(r'"path"\s+"([^"]+)"', f.read()):
-                    libs.append(m.group(1).replace("\\\\", "\\"))
-        except OSError:
-            pass
-    return libs
+def _pick_file() -> str:
+    """Ask for the game's .exe or its level1 file with a file dialog."""
+    import tkinter as tk
+    from tkinter import filedialog
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+    path = filedialog.askopenfilename(
+        parent=root,
+        title="Select Granny Legacy's .exe (or level1 in its _Data folder)",
+        filetypes=[("Game or level1", "*.exe level1"), ("All files", "*.*")],
+    )
+    root.destroy()
+    if not path:
+        sys.exit("No file selected.")
+    return path
 
 
 def find_level_file(arg) -> str:
-    """Resolve a game folder, *_Data folder or level1 path; with no argument,
-    search the Steam libraries for a Granny game folder."""
-    candidates = []
-    if arg:
-        candidates.append(arg)
-    else:
-        for lib in _steam_libraries():
-            candidates += glob.glob(os.path.join(lib, "steamapps", "common", "*[Gg]ranny*"))
-    for c in candidates:
-        if os.path.isfile(c):
-            return c
-        direct = os.path.join(c, LEVEL_FILE)
-        if os.path.isfile(direct):
-            return direct
-        for data_dir in glob.glob(os.path.join(c, "*_Data")):
-            level = os.path.join(data_dir, LEVEL_FILE)
-            if os.path.isfile(level):
-                return level
-    if arg:
-        sys.exit(f"Could not find {LEVEL_FILE} in {arg!r}. Pass the game folder, "
-                 f"its '..._Data' folder, or the level1 file itself.")
-    sys.exit("Could not find Granny Legacy in any Steam library. Pass the game "
-             "folder as an argument, e.g.  python make_dump.py \"D:\\Games\\Granny Legacy\"")
+    """Resolve the game .exe, game folder, *_Data folder or level1 path;
+    with no argument, ask for it with a file dialog."""
+    path = arg or _pick_file()
+    if os.path.isfile(path) and path.lower().endswith(".exe"):
+        path = os.path.dirname(path)
+    if os.path.isfile(path):
+        return path
+    direct = os.path.join(path, LEVEL_FILE)
+    if os.path.isfile(direct):
+        return direct
+    for data_dir in glob.glob(os.path.join(path, "*_Data")):
+        level = os.path.join(data_dir, LEVEL_FILE)
+        if os.path.isfile(level):
+            return level
+    sys.exit(f"Could not find {LEVEL_FILE} for {path!r}. Select the game's .exe, "
+             f"or the level1 file inside its '..._Data' folder.")
 
 
 # ---------------------------------------------------------------------------
@@ -241,7 +229,7 @@ def build_dump(entry: dict, world: WorldPositions) -> dict:
 def main():
     ap = argparse.ArgumentParser(description="Build a config dump from the game files.")
     ap.add_argument("game_path", nargs="?",
-                    help="game folder, its _Data folder, or the level1 file (default: search Steam)")
+                    help="game .exe or folder, its _Data folder, or the level1 file (default: file selector)")
     ap.add_argument("--variant", default="More",
                     help="SeedManager variant to dump (default: More, which covers every object)")
     ap.add_argument("--out-dir", default=os.path.join(PROJ_DIR, "dumps"))
