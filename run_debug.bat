@@ -12,7 +12,7 @@ REM Everything below is one parenthesised block, so cmd.exe has read all of
 REM it before Python starts: the auto-updater may rewrite this file.
 (
     echo Starting Seed Predictor ^(debug mode^)...
-    echo Working directory: %CD%
+    echo Working directory: !CD!
     echo.
 
     python updater.py
