@@ -123,14 +123,38 @@ def _resolve(path: str) -> str:
     return str(_PROJ_DIR / p)
 
 
-def _newest_dump_path() -> str:
+def _newest_dump_path() -> Optional[str]:
+    """Newest dumps/config_*.json, or None when there is no dump."""
     try:
         return str(newest_dump_file(_PROJ_DIR / "dumps", "config_*.json"))
     except FileNotFoundError:
-        raise FileNotFoundError(
-            f"No config_*.json files found in {_PROJ_DIR / 'dumps'}; a mod dump "
-            "is required to supply positions/instanceIds for the scene variants."
-        )
+        return None
+
+
+class _SyntheticGeometry:
+    """Stand-in positions/instanceIds for when no mod dump is available.
+
+    The simulator never uses a position's actual coordinates. Positions only
+    feed GetEffectivePuzzleOfItem's "< 0.01 units from a puzzle spawn point"
+    test, and instanceIds only feed identity comparisons between puzzle
+    spawn points. So what has to be preserved is which objects are the SAME
+    object, and that distinct objects are never within 0.01 units of each
+    other. Both hold if every distinct scene object (keyed by its scene
+    path, or itemName for items) gets its own point 10 units apart from all
+    others, and its instanceId is -(scene pathId), unique within the scene
+    file. That matches the real scene: free spots never sit on a puzzle
+    spawn point (see kernel.cl / re_gpu.md, where the GPU path drops
+    positions entirely and was cross-validated against the position-based
+    CPU path).
+    """
+
+    def __init__(self):
+        self._pos = {}
+
+    def position(self, key: str) -> tuple:
+        if key not in self._pos:
+            self._pos[key] = (10.0 * (len(self._pos) + 1), 0.0, 0.0)
+        return self._pos[key]
 
 
 def _build_dump_lookups(dump_raw: dict):
@@ -215,7 +239,8 @@ def load_variant_config(display_name: str, scene_path: str = "scene_data.json",
 
     Positions and free-spot/puzzle-spawn-point instanceIds -- absent from
     the scene data -- are backfilled by joining against `dump_path` (the
-    newest dumps/config_*.json by default). Objects with no match in the
+    newest dumps/config_*.json by default). With no dump at all they are
+    synthesized instead (see _SyntheticGeometry); results are identical. Objects with no match in the
     dump (currently only 4 items + 2 puzzle spawn points, both exclusive
     to the "More" variant) get position=None and, for spots/spawn points,
     a synthetic negative instanceId derived from the scene pathId.
@@ -227,9 +252,15 @@ def load_variant_config(display_name: str, scene_path: str = "scene_data.json",
 
     if dump_path is None:
         dump_path = _newest_dump_path()
-    dump_raw = _load_scene_raw(dump_path)  # plain JSON load; name is generic
-    item_pos_by_name, spot_by_path, puzzle_spawn_by_path, real_instance_ids = \
-        _build_dump_lookups(dump_raw)
+    synth = None
+    if dump_path is None:
+        # No dump: synthesize every position/instanceId (see _SyntheticGeometry).
+        synth = _SyntheticGeometry()
+        item_pos_by_name, spot_by_path, puzzle_spawn_by_path, real_instance_ids = {}, {}, {}, set()
+    else:
+        dump_raw = _load_scene_raw(dump_path)  # plain JSON load; name is generic
+        item_pos_by_name, spot_by_path, puzzle_spawn_by_path, real_instance_ids = \
+            _build_dump_lookups(dump_raw)
 
     unmatched = []
 
@@ -238,7 +269,9 @@ def load_variant_config(display_name: str, scene_path: str = "scene_data.json",
     for it in v["allItems"]:
         item_name = it.get("itemName")
         if item_name:
-            if item_name in item_pos_by_name:
+            if synth is not None:
+                pos = synth.position("item:" + item_name)
+            elif item_name in item_pos_by_name:
                 pos = item_pos_by_name[item_name]
             else:
                 pos = None
@@ -271,7 +304,10 @@ def load_variant_config(display_name: str, scene_path: str = "scene_data.json",
         spawn_point_pos = None
         if sp:
             match = puzzle_spawn_by_path.get(sp["path"])
-            if match is not None:
+            if synth is not None:
+                spawn_point_id = -sp["pathId"]
+                spawn_point_pos = synth.position("spawn:" + sp["path"])
+            elif match is not None:
                 spawn_point_id, spawn_point_pos = match
             else:
                 spawn_point_id = -sp["pathId"]
@@ -302,7 +338,10 @@ def load_variant_config(display_name: str, scene_path: str = "scene_data.json",
         spots = []
         for s in (a.get("freeSpots") or []):
             match = spot_by_path.get(s["path"])
-            if match is not None:
+            if synth is not None:
+                instance_id = -s["pathId"]
+                pos = synth.position("spot:" + s["path"])
+            elif match is not None:
                 instance_id, pos = match
             else:
                 instance_id = -s["pathId"]
@@ -361,6 +400,8 @@ if __name__ == "__main__":
     print("Equivalence check: load_variant_config('Normal') vs simulator.load_config(newest dump)")
 
     dump_path = _newest_dump_path()
+    if dump_path is None:
+        raise SystemExit("  no dump in dumps/ -- nothing to compare against")
     print(f"  newest dump: {dump_path}")
 
     dump_cfg = simulator.load_config(dump_path)
