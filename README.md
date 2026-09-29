@@ -131,7 +131,7 @@ double-click `run.bat` to open the program.**
 | Nothing appears when you run `run.bat` | Run `run_debug.bat` instead — it keeps a console open and shows the error. |
 | `ModuleNotFoundError: No module named 'tkinter'` | Re-run the Python installer and enable the "tcl/tk and IDLE" component. |
 | `pyopencl` fails to install or no GPU is offered | Not fatal — the CPU backend is used. For GPU, update your graphics drivers (they supply the OpenCL runtime). |
-| GUI starts but reports no scene dump | A `dumps/config_*.json` must exist — see "Regenerating scene dumps" below. |
+| GUI starts but reports no scene dump | Run `make_dump.bat` — see "Regenerating scene dumps" below. |
 
 ## How to run
 
@@ -145,9 +145,9 @@ or directly:
 python gui.py
 ```
 
-A `dumps/config_*.json` scene dump must already
-exist in `dumps/` (see "Regenerating dumps" below) -- the GUI loads the
-newest one automatically.
+A `dumps/config_*.json` scene dump is optional: without one, positions
+are synthesized (see `variants.py`). To use real positions, run
+`make_dump.bat` once (see "Regenerating scene dumps" below).
 
 On startup, the GUI tries to initialize an OpenCL GPU backend
 (`gpu_backend.GpuSearchBackend`). If a working `cl_khr_fp64`-capable device
@@ -283,7 +283,24 @@ Version" slider** to choose from (1.0) to (1.8), corresponding to versions
 slider to (1.8) and enable the **Extras toggle**. The **Flash toggle**
 (separate from the flashlight) must be ON for the seed system to be active.
 
-## Regenerating scene dumps (`SeedDumper` mod)
+## Regenerating scene dumps
+
+### From the game files (no mod)
+
+Double-click `make_dump.bat` and select the game's `.exe` (or the `level1`
+file in its `_Data` folder) in the file selector, or drag the game folder
+onto it. It reads the `level1` scene file with
+UnityPy (installed automatically), and writes
+`dumps/config_0_<timestamp>.json`, with real world positions computed from
+the scene's Transform hierarchy. The dump covers the `More` variant, whose
+objects include those of every other variant. From a console:
+`python make_dump.py ["<game folder>"] [--variant Normal]`.
+
+Unity only assigns instanceIds at runtime, so this dump uses
+`-(scene pathId)` instead; the simulator only compares them for identity.
+It has no `placement_*.json` partner, so it can't be used for validation.
+
+### With the `SeedDumper` mod
 
 The simulator's config comes from a `config_<seed>_<timestamp>.json` dump
 produced by the `SeedDumper` MelonLoader mod, which observes
