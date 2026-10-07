@@ -9,9 +9,11 @@ approximating.
 ## What it does
 
 You tell the tool which items you want pinned to specific spots (or which
-you'd merely prefer), and it searches the 32-bit signed seed space
-(`-2147483648 .. 2147483647`) for seeds whose resulting item placement
-satisfies those constraints. Every reported seed is guaranteed correct: it
+you'd merely prefer), and it searches for seeds whose resulting item
+placement satisfies those constraints. By default it only searches seeds
+the in-game Seed box accepts (9 characters: `-99999999 .. 999999999`);
+ticking **Allow 64-bit seeds** lifts that up to the signed 64-bit limit
+(`-9223372036854775808 .. 9223372036854775807`). Every reported seed is guaranteed correct: it
 is either produced directly by, or independently re-verified against,
 `simulator.py` -- a bit-exact re-implementation of the game's own
 `SeedManager.GeneratePlacement` (including its internal retry loop, escape
@@ -151,13 +153,21 @@ newest one automatically.
 
 On startup, the GUI tries to initialize an OpenCL GPU backend
 (`gpu_backend.GpuSearchBackend`). If a working `cl_khr_fp64`-capable device
-is found, it is used by default and the default search range is the full
-32-bit seed space (a full sweep takes on the order of 10-15 minutes on a
-modern discrete GPU). If no GPU is available, the tool falls back to a
+is found, it is used by default and the default search range is "Full"
+(every 9-character seed, ~1.1 billion seeds -- a few minutes on a modern
+discrete GPU, which sweeps 2^32 seeds in roughly 10-15 minutes). If no GPU is available, the tool falls back to a
 multiprocessing CPU backend (`search.CpuSearchBackend`) and defaults to a
 smaller "quick scan" range, since a full 2^32 sweep on CPU alone is
 impractical. You can switch backends and the search range manually at any
 time from the GUI.
+
+**64-bit seeds.** The game stores its seed in a 32-bit `int` and seeds
+`System.Random(int)` with it, so a 64-bit seed only reaches the RNG through
+its low 32 bits (C# unchecked cast). The simulator and GPU kernel model
+exactly that, which means seeds exactly 2^32 apart give identical
+placements, and any 2^32 consecutive seeds already cover every layout the
+game can produce. 64-bit seeds can't be written to the registry (its value
+is 32-bit) -- copy them and enter them however you normally do.
 
 The GUI includes a **House version** dropdown (default `Normal`) that lets
 you choose which version to generate seeds for. The feasibility estimates,
@@ -252,8 +262,8 @@ This is a simplified model (it treats every slot as equally likely and
 ignores that puzzle slots have far fewer eligible candidate items than free
 slots, and any correlation between items), so treat it as a rough
 estimate, not a guarantee -- see `search.feasibility_message()`. If a
-search comes back empty, especially after already scanning the full 2^32
-range, the most effective fix is almost always to **remove one pin
+search comes back empty, especially after already scanning 2^32 or more
+consecutive seeds, the most effective fix is almost always to **remove one pin
 constraint** and search again.
 
 ## House Versions

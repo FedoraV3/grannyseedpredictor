@@ -645,7 +645,7 @@ class GpuSearchBackend:
         pin_target_buf = cl.Buffer(self.ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=pin_target)
 
         max_hits_buffer = max(4096, (limit or 0) * 8, 4096)
-        hit_seeds_buf = cl.Buffer(self.ctx, mf.WRITE_ONLY, size=max_hits_buffer * 4)
+        hit_seeds_buf = cl.Buffer(self.ctx, mf.WRITE_ONLY, size=max_hits_buffer * 8)
         hit_count_buf = cl.Buffer(self.ctx, mf.READ_WRITE, size=4)
 
         seeds_done = 0
@@ -694,12 +694,12 @@ class GpuSearchBackend:
                 # (seed_ptr/this_batch unchanged) so nothing is silently
                 # lost.
                 max_hits_buffer = n_hits * 2
-                hit_seeds_buf = cl.Buffer(self.ctx, mf.WRITE_ONLY, size=max_hits_buffer * 4)
+                hit_seeds_buf = cl.Buffer(self.ctx, mf.WRITE_ONLY, size=max_hits_buffer * 8)
                 continue
 
             cancelled_during_verify = False
             if n_hits > 0:
-                hit_seeds_host = np.empty(n_hits, dtype=np.int32)
+                hit_seeds_host = np.empty(n_hits, dtype=np.int64)
                 cl.enqueue_copy(self.queue, hit_seeds_host, hit_seeds_buf)
                 # CPU re-verification is ~164 seeds/sec, i.e. ~40,000x slower
                 # than the GPU dispatch that produced these candidates. With a
