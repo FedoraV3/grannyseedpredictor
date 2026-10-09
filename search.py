@@ -76,6 +76,20 @@ ProgressCb = Optional[Callable[[int, int, int], None]]  # (seeds_done, total, hi
 
 DEFAULT_FULL_RANGE = (-2147483648, 2147483647)   # full signed int32 space
 DEFAULT_QUICK_RANGE = (0, 100_000_000)           # "quick scan" default
+# Every seed the in-game Seed box accepts: at most 9 characters, sign included.
+NINE_CHAR_RANGE = (-99_999_999, 999_999_999)
+# Full signed int64 space. The game's `Seed` field and `System.Random(int)` are
+# 32-bit, so a wider seed only ever reaches the RNG through its low 32 bits
+# (C# unchecked cast) -- which is exactly what NetRandom/_wrap32 and the GPU
+# kernel do. Seeds 2**32 apart therefore produce identical placements.
+INT64_RANGE = (-(2 ** 63), 2 ** 63 - 1)
+
+
+def covers_every_layout(seed_range: tuple[int, int]) -> bool:
+    """True if `seed_range` (inclusive) spans at least 2**32 consecutive
+    seeds, i.e. hits every distinct low-32-bit value and so every placement
+    the game can produce."""
+    return seed_range[1] - seed_range[0] + 1 >= SEED_SPACE
 
 
 class SearchBackend(Protocol):
@@ -739,12 +753,13 @@ class CpuSearchBackend:
             raise ValueError(f"Invalid seed_range: {seed_range}")
         total = end - start + 1
 
-        chunks = []
-        s = start
-        while s <= end:
-            e = min(s + self.chunk_size - 1, end)
-            chunks.append((s, e))
-            s = e + 1
+        # Lazy: a 64-bit range has far too many chunks to build a list of.
+        def chunks():
+            s = start
+            while s <= end:
+                e = min(s + self.chunk_size - 1, end)
+                yield (s, e)
+                s = e + 1
 
         seeds_done = 0
         hits: list[SeedResult] = []
@@ -753,7 +768,7 @@ class CpuSearchBackend:
         with ctx.Pool(processes=self.num_workers, initializer=_worker_init,
                       initargs=(config, constraints)) as pool:
             try:
-                for n_scanned, chunk_hits in pool.imap_unordered(_search_chunk, chunks):
+                for n_scanned, chunk_hits in pool.imap_unordered(_search_chunk, chunks()):
                     seeds_done += n_scanned
                     hits.extend(chunk_hits)
                     if progress_cb is not None:
@@ -782,7 +797,8 @@ class CpuSearchBackend:
 #   - config: the dict returned by simulator.load_config().
 #   - constraints: list[Constraint] as above; "pin" is mandatory-match,
 #     "prefer" is scored only.
-#   - seed_range: inclusive (start, end) over signed int32 seed values.
+#   - seed_range: inclusive (start, end) over signed seed values, up to the
+#     full int64 range; each seed reaches the RNG via its low 32 bits.
 #   - limit: stop once this many hits are found (0/None = unbounded --
 #     caller beware on the full 2**32 range).
 #   - progress_cb(seeds_done, total, hits_found): called periodically (not

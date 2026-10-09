@@ -547,7 +547,9 @@ static bool simulate_one_attempt(
     bool* mismatch_out)
 {
     RndState rnd;
-    long netseed64 = seed + (long)attempt;   /* NetRandom(seed + attempt) */
+    /* NetRandom(seed + attempt). Only the low 32 bits matter, so wrap first:
+     * a 64-bit seed near INT64_MAX would otherwise overflow the addition. */
+    long netseed64 = (long)wrap32(seed) + (long)attempt;
     net_random_init(&rnd, wrap32(netseed64));
 
     for (int i = 0; i < NUM_ITEMS; i++) result_slot[i] = -1;
@@ -837,8 +839,8 @@ __kernel void debug_placement(
     }
 }
 
-/* Production search: one work item per seed. Appends `seed` (the raw
- * int32 seed value, NOT gid) to hit_seeds via atomic_inc(hit_count) iff the
+/* Production search: one work item per seed. Appends `seed64` (the full
+ * 64-bit seed value, NOT gid) to hit_seeds via atomic_inc(hit_count) iff the
  * FULL retry-loop placement (attempts 1..50, the same one
  * `simulator.simulate()` would produce) satisfies every PIN constraint.
  * hit_count is incremented even past max_hits so the host can always detect
@@ -868,14 +870,13 @@ __kernel void search_kernel(
     imask_t required_item_mask,
     imask_t pin_mask,
     __global const int*  pin_target,
-    __global int* hit_seeds,
+    __global long* hit_seeds,
     uint max_hits,
     __global volatile uint* hit_count)
 {
     size_t gid = get_global_id(0);
     if (gid >= seed_count) return;
     long seed64 = seed_start + (long)gid;
-    int seed = (int)seed64;
 
     int result_slot[NUM_ITEMS];
     bool pin_violated;
@@ -890,7 +891,7 @@ __kernel void search_kernel(
     if (!pin_violated) {
         uint idx = atomic_inc(hit_count);
         if (idx < max_hits) {
-            hit_seeds[idx] = seed;
+            hit_seeds[idx] = seed64;
         }
     }
 }

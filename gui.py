@@ -77,6 +77,8 @@ def _format_duration(seconds: float) -> str:
     if minutes < 60:
         return f"{minutes}m {sec}s"
     hours, minutes = divmod(minutes, 60)
+    if hours >= 24 * 365:
+        return f"{hours / (24 * 365):,.0f} years"
     return f"{hours}h {minutes}m"
 
 
@@ -428,7 +430,7 @@ class SeedPredictorApp:
         backend_frame = tk.LabelFrame(self.root, text="Search backend")
         backend_frame.pack(fill="x", padx=8, pady=4)
         tk.Radiobutton(
-            backend_frame, text="GPU (OpenCL -- full 2^32 scan in ~12 min)",
+            backend_frame, text="GPU (OpenCL -- ~12 min per 2^32 seeds)",
             variable=self.backend_choice, value="gpu", command=self._on_backend_change,
             state="normal" if self.gpu_available else "disabled",
         ).pack(side="left")
@@ -497,19 +499,31 @@ class SeedPredictorApp:
         self.range_choice = tk.StringVar(value="full" if self.gpu_available else "quick")
         tk.Radiobutton(range_frame, text="Quick scan (0 .. 100,000,000)", variable=self.range_choice,
                        value="quick").pack(side="left")
-        tk.Radiobutton(range_frame, text="Full 32-bit range", variable=self.range_choice,
-                       value="full").pack(side="left")
+        self.full_range_radio = tk.Radiobutton(range_frame, variable=self.range_choice,
+                                               value="full")
+        self.full_range_radio.pack(side="left")
         tk.Radiobutton(range_frame, text="Custom:", variable=self.range_choice,
                        value="custom").pack(side="left")
         self.custom_start_var = tk.StringVar(value="0")
         self.custom_end_var = tk.StringVar(value="100000000")
-        tk.Entry(range_frame, textvariable=self.custom_start_var, width=12).pack(side="left", padx=2)
+        tk.Entry(range_frame, textvariable=self.custom_start_var, width=21).pack(side="left", padx=2)
         tk.Label(range_frame, text="to").pack(side="left")
-        tk.Entry(range_frame, textvariable=self.custom_end_var, width=12).pack(side="left", padx=2)
+        tk.Entry(range_frame, textvariable=self.custom_end_var, width=21).pack(side="left", padx=2)
 
         tk.Label(range_frame, text="   Max results:").pack(side="left", padx=(12, 2))
         self.limit_var = tk.StringVar(value="50")
         tk.Entry(range_frame, textvariable=self.limit_var, width=6).pack(side="left")
+
+        # Off: only seeds the in-game Seed box accepts (9 characters). On:
+        # anything up to the signed 64-bit limit, for seeds entered some
+        # other way.
+        self.allow_64bit_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(
+            ctrl, text="Allow 64-bit seeds (remove the 9-character limit, up to "
+                       "±9,223,372,036,854,775,807)",
+            variable=self.allow_64bit_var, command=self._update_seed_limit_labels,
+        ).pack(anchor="w", padx=4)
+        self._update_seed_limit_labels()
 
         btn_frame = tk.Frame(ctrl)
         btn_frame.pack(fill="x", padx=4, pady=4)
@@ -757,16 +771,22 @@ class SeedPredictorApp:
         num_pins = sum(1 for c in self._current_constraints() if c.kind == "pin")
         total_slots = search.total_slots_for_config(self.config)
         feas = search.feasibility_message(num_pins, total_slots)
-        scanned_everything = self._last_seed_range == search.DEFAULT_FULL_RANGE
+        scanned_everything = (self._last_seed_range is not None
+                              and search.covers_every_layout(self._last_seed_range))
         if scanned_everything and num_pins >= 1:
             return (
-                f"No seed found. {feas} This search already covered the ENTIRE "
-                f"2^32 seed space, so no seed satisfies these exact pins in this "
+                f"No seed found. {feas} This search covered every distinct layout "
+                f"(2^32 seeds), so no seed satisfies these exact pins in this "
                 f"game version -- remove at least one pin constraint and search again.")
+        if not self.allow_64bit_var.get():
+            return (
+                f"No seed found in this range. {feas} Try removing a pin constraint, "
+                f"widening the range, or (if you can enter longer seeds) ticking "
+                f"'Allow 64-bit seeds' to search beyond 9-character seeds.")
         return (
             f"No seed found in this range. {feas} Try removing a pin constraint, "
-            f"widening the range, or (on the GPU backend) the full 32-bit range "
-            f"(~12 minutes) to search exhaustively.")
+            f"or widen the range -- any 2^32 consecutive seeds (~12 minutes on "
+            f"the GPU backend) cover every layout.")
 
     # -- Backend selection --------------------------------------------------
 
@@ -794,14 +814,14 @@ class SeedPredictorApp:
 
         if choice == "gpu":
             self.backend = self.gpu_backend_obj
-            # Full 2^32 is practical on GPU (~12 min); switch the default up
+            # A full scan is practical on GPU; switch the default up
             # from the CPU-oriented "quick scan" unless the user already
             # picked something else.
             if self.range_choice.get() == "quick":
                 self.range_choice.set("full")
         else:
             self.backend = self.cpu_backend
-            # Full 2^32 is impractical on CPU; switch back to quick scan.
+            # A full scan is impractical on CPU; switch back to quick scan.
             if self.range_choice.get() == "full":
                 self.range_choice.set("quick")
 
@@ -820,20 +840,40 @@ class SeedPredictorApp:
 
     # -- Generate / Cancel -----------------------------------------------
 
+    def _seed_limits(self) -> tuple[int, int]:
+        if self.allow_64bit_var.get():
+            return search.INT64_RANGE
+        return search.NINE_CHAR_RANGE
+
+    def _update_seed_limit_labels(self):
+        if self.allow_64bit_var.get():
+            self.full_range_radio.config(text="Full 64-bit range")
+        else:
+            self.full_range_radio.config(text="Full range (all 9-character seeds)")
+
     def _get_seed_range(self) -> tuple[int, int] | None:
         choice = self.range_choice.get()
         if choice == "quick":
             return search.DEFAULT_QUICK_RANGE
         if choice == "full":
-            return search.DEFAULT_FULL_RANGE
+            return self._seed_limits()
         try:
-            start = int(self.custom_start_var.get())
-            end = int(self.custom_end_var.get())
+            start = int(self.custom_start_var.get().replace(",", "").strip())
+            end = int(self.custom_end_var.get().replace(",", "").strip())
         except ValueError:
             messagebox.showerror("Invalid range", "Custom start/end must be integers.")
             return None
         if end < start:
             messagebox.showerror("Invalid range", "End must be >= start.")
+            return None
+        lo, hi = self._seed_limits()
+        if start < lo or end > hi:
+            if self.allow_64bit_var.get():
+                msg = f"Seeds must be within the signed 64-bit range ({lo} to {hi})."
+            else:
+                msg = (f"Seeds must be at most 9 characters ({lo} to {hi}). Tick "
+                       f"'Allow 64-bit seeds' to search beyond that.")
+            messagebox.showerror("Invalid range", msg)
             return None
         return (start, end)
 
@@ -988,6 +1028,13 @@ class SeedPredictorApp:
     def _on_apply_to_game(self):
         seed = self._selected_seed
         if seed is None:
+            return
+        if not -2**31 <= seed < 2**31:
+            messagebox.showerror(
+                "Seed too large for the registry",
+                f"Seed {seed} does not fit in the game's 32-bit registry value, "
+                "so it cannot be written there. Copy it and enter it the way you "
+                "normally enter 64-bit seeds.")
             return
 
         warning = (
