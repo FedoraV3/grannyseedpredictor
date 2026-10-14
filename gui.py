@@ -368,8 +368,14 @@ class SeedPredictorApp:
         self._selected_seed: int | None = None
         self._search_start_time: float = 0.0
         self._last_seed_range: tuple[int, int] | None = None
+        # Measured feasibility statistics (search.PlacementStats), one per
+        # house version, built on a background thread -- see _start_stats_build.
+        self._stats_by_variant: dict[str, search.PlacementStats] = {}
+        self._stats_progress: dict[str, tuple[int, int]] = {}
+        self._stats_lock = threading.Lock()
 
         self._build_ui()
+        self._start_stats_build()
         self._refresh_current_seed()
         self._update_variant_stats_label()
         self._update_variant_ingame_label()
@@ -718,6 +724,7 @@ class SeedPredictorApp:
         self._update_variant_stats_label()
         self._update_variant_ingame_label()
         self._update_apply_instructions_label()
+        self._start_stats_build()
         self._update_feasibility()
 
     # -- Item table --------------------------------------------------------
@@ -755,11 +762,70 @@ class SeedPredictorApp:
                 out.append(c)
         return out
 
-    def _update_feasibility(self):
-        constraints = self._current_constraints()
+    def _config_key(self) -> str:
+        """Identity of the currently loaded config, for the stats cache."""
+        return self.config.get("variantName") or str(self.config_path)
+
+    def _current_stats(self) -> search.PlacementStats | None:
+        with self._stats_lock:
+            return self._stats_by_variant.get(self._config_key())
+
+    def _start_stats_build(self):
+        """Sample the current house version's placements on a background
+        thread so the feasibility line can use measured per-item slot
+        frequencies instead of the uniform model. Until it finishes the
+        uniform estimate is shown, marked as rough."""
+        key = self._config_key()
+        with self._stats_lock:
+            if key in self._stats_by_variant or key in self._stats_progress:
+                return
+            self._stats_progress[key] = (0, search.DEFAULT_FEASIBILITY_SAMPLES)
+        config = self.config
+
+        def progress(done, total):
+            with self._stats_lock:
+                self._stats_progress[key] = (done, total)
+            self.root.after(0, self._update_feasibility)
+
+        def worker():
+            try:
+                stats = search.PlacementStats(config, progress_cb=progress)
+            except Exception as e:  # never let a stats failure take the GUI down
+                print(f"feasibility sampling failed for {key}: {e}", file=_sys.stderr)
+                with self._stats_lock:
+                    self._stats_progress.pop(key, None)
+                return
+            with self._stats_lock:
+                self._stats_by_variant[key] = stats
+                self._stats_progress.pop(key, None)
+            self.root.after(0, self._update_feasibility)
+
+        threading.Thread(target=worker, daemon=True, name=f"feasibility-{key}").start()
+
+    def _feasibility_text(self, constraints: list[search.Constraint]) -> str:
+        """Feasibility line for `constraints`: measured if this version's
+        stats are ready, otherwise the uniform model plus sampling progress."""
+        stats = self._current_stats()
+        if stats is not None:
+            return stats.feasibility_message(constraints)
         num_pins = sum(1 for c in constraints if c.kind == "pin")
         total_slots = search.total_slots_for_config(self.config)
-        self.feasibility_var.set(search.feasibility_message(num_pins, total_slots))
+        msg = search.feasibility_message(num_pins, total_slots)
+        with self._stats_lock:
+            prog = self._stats_progress.get(self._config_key())
+        if prog is not None and num_pins > 0:
+            msg += f"  [measuring real placement odds: {prog[0]:,}/{prog[1]:,} layouts]"
+        return msg
+
+    def _expected_matches(self, constraints: list[search.Constraint]) -> float:
+        stats = self._current_stats()
+        if stats is not None:
+            return stats.estimate(constraints).expected_matches
+        num_pins = sum(1 for c in constraints if c.kind == "pin")
+        return search.estimate_expected_matches(num_pins, search.total_slots_for_config(self.config))
+
+    def _update_feasibility(self):
+        self.feasibility_var.set(self._feasibility_text(self._current_constraints()))
 
     def _no_results_message(self) -> str:
         """Explains WHY no seed was found, in terms of the feasibility model
@@ -768,9 +834,9 @@ class SeedPredictorApp:
         fewer slots per pin, so tolerate more pins before it gets hopeless),
         and suggests a concrete next step.
         """
-        num_pins = sum(1 for c in self._current_constraints() if c.kind == "pin")
-        total_slots = search.total_slots_for_config(self.config)
-        feas = search.feasibility_message(num_pins, total_slots)
+        constraints = self._current_constraints()
+        num_pins = sum(1 for c in constraints if c.kind == "pin")
+        feas = self._feasibility_text(constraints)
         scanned_everything = (self._last_seed_range is not None
                               and search.covers_every_layout(self._last_seed_range))
         if scanned_everything and num_pins >= 1:
@@ -880,12 +946,11 @@ class SeedPredictorApp:
     def _on_generate(self):
         constraints = self._current_constraints()
         num_pins = sum(1 for c in constraints if c.kind == "pin")
-        total_slots = search.total_slots_for_config(self.config)
-        if search.estimate_expected_matches(num_pins, total_slots) < 1:
+        if self._expected_matches(constraints) < 1:
             if not messagebox.askyesno(
                 "Almost certainly impossible",
-                f"{num_pins} pins is essentially impossible to satisfy (see feasibility "
-                f"estimate: {search.feasibility_message(num_pins, total_slots)}). Search anyway?"):
+                f"These {num_pins} pins are essentially impossible to satisfy (feasibility "
+                f"estimate: {self._feasibility_text(constraints)}). Search anyway?"):
                 return
 
         seed_range = self._get_seed_range()
