@@ -271,8 +271,11 @@ sample is reported as an upper bound ("at most ...").
 As a rule of thumb for `Normal`, 1-3 pins are usually easy, 4 pins often
 still work if they include puzzle slots, and 5+ free-spot pins almost never
 have a seed. Smaller house versions have fewer slots, so they tolerate more
-pins. Treat the number as an estimate from an 8,000-layout sample (roughly
-+/-25% for rare free-spot pins, a few percent for puzzle pins), not a guarantee. If a search comes back empty,
+pins. Treat the number as an estimate from an 8,000-layout sample: measured
+against an independent 120,000-seed sample it was within ~15% for puzzle
+pins and pin pairs, but a pin on a specific free spot is rare (a few hits
+in the sample), so those can be off by about a factor of 2. It is not a
+guarantee. If a search comes back empty,
 especially after already scanning 2^32 or more consecutive seeds, the most
 effective fix is almost always to **remove one pin constraint** and search
 again -- the feasibility line tells you which pins are the expensive ones.

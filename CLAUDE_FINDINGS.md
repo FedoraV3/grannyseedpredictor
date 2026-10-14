@@ -557,7 +557,7 @@ The attempt-1-only limitation in §23 meant the GPU would **miss ~8% of valid se
 ### Known issues (measured, documented, not hidden)
 - **Cancel latency** up to ~13s worst case (1 pin, no limit, full range): `gpu_backend` only checks cancellation between dispatches, and CPU re-verification of a batch runs synchronously first. ~1.1s with a typical 2-pin search.
 - `CpuSearchBackend`'s "quick scan" default of `0..100,000,000` is **not quick on CPU** (hours at ~6k seeds/s). Pre-existing; only matters if the GPU is unavailable.
-- The GUI's feasibility estimate uses `search.py`'s existing 87-slot model rather than the 71-slot figure in §12 — slightly more optimistic; both are approximations.
+- ~~The GUI's feasibility estimate uses `search.py`'s existing 87-slot model rather than the 71-slot figure in §12 — slightly more optimistic; both are approximations.~~ Replaced by a measured estimate, see §33.
 
 ## 28. 🎯 FIRST REAL INVERSE-SEED RESULT
 
@@ -641,3 +641,30 @@ Under `pythonw` there is no console, so `sys.stdout`/`sys.stderr` are `None`. Py
 - Two "LAUNCH FAILED" results were **test-harness artifacts**, not script bugs: PowerShell's `Start-Process` does not inherit `Set-Location`, so a relative `run.bat` argument was never found. Verified working once given a full path + `-WorkingDirectory`.
 
 **Verified:** `run.bat` → GUI launches (responding), console self-closes (0 leftover windows), `logs/gui.log` contains only the harmless PyOpenCL warning.
+
+---
+
+## 33. Feasibility estimate measured from real placements
+
+The feasibility line used `2^32 / total_slots^pins`, i.e. every item equally likely on every slot. Measured on `Normal` with the bit-exact fast path, that is wrong by more than an order of magnitude per pin in both directions: `MasterKey` lands in `PUZZLE:ToyLock` in ~14% of seeds (uniform: 1.1%), on a given free spot in ~0.3% (uniform: 1.1%), and category-4 (free-only) items never land in a puzzle.
+
+`search.PlacementStats` now runs `_run_fast_multi_attempt` on 8,000 seeds drawn uniformly from int32 (~1.4 ms each, built per house version on a GUI background thread; the uniform figure is shown, labelled rough, until it is ready), records where every item landed, and prices a pin set from those odds. Pins are taken most-common first and each is measured *within* the samples that satisfy the earlier pins while >= 100 remain, then from its marginal. Structural impossibilities (item not allowed for that puzzle, free-only item on a puzzle, two items on one slot, one item on two slots) are decided from the config with the simulator's own predicates and reported as IMPOSSIBLE with the reason.
+
+**Validation** (independent sample of 120,000 random seeds, `Normal`; "actual" = hits scaled to 2^32):
+
+| Pin set | Uniform | Measured | Actual | Hits | measured/actual | uniform/actual |
+|---|---|---|---|---|---|---|
+| MasterKey->ToyLock | 49,367,440 | 599,684,809 | 618,403,708 | 17,278 | 0.97 | 0.08 |
+| CarKey->Safe | 49,367,440 | 107,911,053 | 103,723,460 | 2,898 | 1.04 | 0.48 |
+| Hammer->Kitchen/Spot (29) | 49,367,440 | 12,884,902 | 12,670,154 | 354 | 1.02 | 3.90 |
+| MasterKey->Garage/Spot (5) | 49,367,440 | 4,831,838 | 8,840,474 | 247 | 0.55 | 5.58 |
+| SafeKey->ToyLock + CarKey->Safe | 567,442 | 16,106,127 | 16,249,293 | 454 | 0.99 | 0.03 |
+| Melon->AtticSpiderLocker + WPKey->Melon | 567,442 | 52,613,349 | 47,745,720 | 1,334 | 1.10 | 0.01 |
+| Hammer->Kitchen/Spot (29) + CarKey->Safe | 567,442 | 323,733 | 465,288 | 13 | 0.70 | 1.22 |
+| MasterKey->ToyLock + PlayKey->ScrewHoleCellar + Wrench->BirdCage | 6,522 | 7,516,193 | 6,585,617 | 184 | 1.14 | 0.00 |
+| Pliers->DrawerCribRoom + Meat->DrawerCribRoom | 567,442 | 0 (impossible) | 0 | 0 | - | - |
+| §28's 3 pins (MasterKey Garage/Spot (5), Hammer Kitchen/Spot (29), CarKey Safe) | 6,522 | 364 | ~1,160 (§28: 5 hits in 18.5M) | - | ~0.3 | ~5.6 |
+
+Puzzle pins and pin pairs come out within ~15% of the truth where the uniform model was 12-100x off. The remaining error is in pins on one specific free spot: at ~0.2% per seed they get only ~10-16 hits in the 8,000-layout sample, so a single such pin can be off by about 2x (the `MasterKey->Garage/Spot (5)` row), and that error carries into §28's 3-pin set. More samples would tighten it linearly in cost; 8,000 was chosen to keep the background build around 10 s.
+
+Not measured: the estimate on non-`Normal` variants beyond a smoke test that `PlacementStats` builds and prices a pin on all 10 (`test_feasibility.py` covers `Normal` only).
