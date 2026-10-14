@@ -239,38 +239,51 @@ must be fully closed first.
 ## Pin-count feasibility
 
 Every additional **Pin** constraint shrinks the pool of matching seeds
-roughly geometrically, because each pin only matches if that specific item
-lands on that specific slot out of the scene's addressable slots. Over the
-full `2^32` seed space, the rough expected number of matching seeds for `k`
-independent pins is approximately `2^32 / N^k` for `N` on the order of the
-variant's total slots.
+roughly geometrically, so the GUI shows a live **Feasibility** line with the
+expected number of matching seeds in the full `2^32` seed space.
 
-**For the Normal variant (87 slots):**
+**The estimate is measured, not assumed.** When a house version is selected,
+the tool runs the game's own placement algorithm (the same bit-exact
+simulator the search uses) on 5,000 seeds spread over the seed space in the
+background, and records where every item actually landed. Your pins are
+then priced from those real odds (`search.PlacementStats`), conditioning
+each pin on the ones before it while enough matching samples remain, so
+correlations like "two items can't share a slot" are included. Until the
+sampling finishes (a few seconds) a rough uniform model is shown, labelled
+as such.
 
-| Pins | Expected matching seeds (rough) |
-|---|---|
-| 1-3 | Usually thousands to millions -- easy |
-| 4 | Tens to low hundreds -- still findable, may need the full range |
-| 5 | Single digits -- a match may not exist at all |
-| 6+ | Essentially zero -- almost certainly impossible |
+This matters because the odds are very uneven. Measured on `Normal`:
 
-**For earlier variants**, the denominators are smaller, so **more pins are
-feasible**: v1.0 (39 slots) reliably supports ~5–6 pins; v1.1–1.3 support
-~4–5; v1.4–1.7 support ~3–4.
+| Pin | Uniform model (1/87) | Measured |
+|---|---|---|
+| `MasterKey` -> `PUZZLE:ToyLock` | 1.1% of seeds | ~14% of seeds |
+| `MasterKey` -> one particular free spot | 1.1% of seeds | ~0.3% of seeds |
+| `Code` (a free-only item) -> any puzzle | 1.1% of seeds | 0 -- never happens |
 
-This is a simplified model (it treats every slot as equally likely and
-ignores that puzzle slots have far fewer eligible candidate items than free
-slots, and any correlation between items), so treat it as a rough
-estimate, not a guarantee -- see `search.feasibility_message()`. If a
-search comes back empty, especially after already scanning 2^32 or more
-consecutive seeds, the most effective fix is almost always to **remove one pin
-constraint** and search again.
+So a pin on a popular puzzle costs almost nothing, a pin on a specific free
+spot costs roughly four times what the old model said, and some pins are
+simply impossible. Impossible pin sets (an item the game never puts in that
+puzzle, two items on one slot, one item on two slots) are reported as
+**IMPOSSIBLE** with the reason, from the game's own eligibility rules
+rather than from sampling. A pin that is allowed but was never seen in the
+sample is reported as an upper bound ("at most ...").
+
+As a rule of thumb for `Normal`, 1-3 pins are usually easy, 4 pins often
+still work if they include puzzle slots, and 5+ free-spot pins almost never
+have a seed. Smaller house versions have fewer slots, so they tolerate more
+pins. Treat the number as an estimate from a 5,000-layout sample (roughly
++/-30% for rare single pins), not a guarantee. If a search comes back empty,
+especially after already scanning 2^32 or more consecutive seeds, the most
+effective fix is almost always to **remove one pin constraint** and search
+again -- the feasibility line tells you which pins are the expensive ones.
 
 ## House Versions
 
 The game ships 10 distinct house versions, each with a different set of
 items, puzzles, and accessible areas. Each version has a different pinning
-ceiling due to its slot count (smaller versions allow more pins). A seed
+ceiling due to its slot count (smaller versions allow more pins); the
+ceilings below are rough, the GUI's feasibility line gives the measured
+answer for your actual pins. A seed
 generated for one version will **not** work on another — the version
 **must match** between the tool and the in-game setting.
 
@@ -336,7 +349,7 @@ changes the scene layout):
 | `simulator.py` | Reference implementation of the game's item randomizer (31/31 validated on two real seeds) |
 | `net_random.py` | Bit-exact `.NET System.Random` |
 | `variants.py` | Loads and handles the 10 house versions from `scene_data.json`; drop-in interface matching `simulator.load_config()` |
-| `search.py` | Backend-agnostic search engine, `Constraint`/`SeedResult` types, `CpuSearchBackend` |
+| `search.py` | Backend-agnostic search engine, `Constraint`/`SeedResult` types, `CpuSearchBackend`, measured feasibility estimate (`PlacementStats`) |
 | `gpu_backend.py` + `kernel.cl` | OpenCL GPU search backend (`GpuSearchBackend`), CPU-reverified; supports 32-bit and 64-bit item masks |
 | `install.bat` | One-click installer: finds/installs Python, installs the libraries, then launches `run.bat` |
 | `requirements.txt` | Python package requirements (`numpy`; optional `pyopencl`) |
@@ -344,6 +357,7 @@ changes the scene layout):
 | `gui.py` | Tkinter front-end: version selector, constraint editor, backend selection, search, results, apply-seed flow |
 | `seed_registry.py` | Windows registry read/write for the game's `PlayerPrefs` seed value (experimental apply path) |
 | `ground_truth.py` | Ground-truth placement data used during simulator validation |
+| `test_feasibility.py` | Checks for the measured feasibility estimator |
 | `dumps/` | Captured `config_*.json` / `placement_*.json` dumps |
 | `scene_data.json` | Scene metadata for all 10 house versions extracted from the game's binary; source for `variants.py` |
 | `CLAUDE_FINDINGS.md`, `re_*.md` | Reverse-engineering notes and validation logs |

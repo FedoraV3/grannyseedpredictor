@@ -143,26 +143,224 @@ def estimate_expected_matches(num_pins: int, total_slots: int = TOTAL_SLOTS) -> 
 
 
 def feasibility_message(num_pins: int, total_slots: int = TOTAL_SLOTS) -> str:
-    """Human-readable feasibility line for the GUI to display live.
+    """Human-readable feasibility line for the GUI to display live, from
+    the UNIFORM model (`estimate_expected_matches`). Used as the fallback
+    while a variant's `PlacementStats` are still being sampled; prefer
+    `PlacementStats.feasibility_message()` once they exist.
 
     Thresholds are keyed off the ESTIMATE, not off a hardcoded pin count,
     so the advice stays correct across variants with different slot counts.
     """
-    est = estimate_expected_matches(num_pins, total_slots)
     if num_pins <= 0:
         return "No pins set -- every seed is a candidate (ranked by preferences)."
+    est = estimate_expected_matches(num_pins, total_slots)
+    return _format_feasibility(est, num_pins, "rough estimate", unobserved=False)
+
+
+def _format_feasibility(est: float, num_pins: int, basis: str, unobserved: bool) -> str:
+    """Shared wording for both feasibility models. `basis` names where the
+    number comes from (e.g. "rough estimate" or "measured from 5,000
+    sampled layouts"); `unobserved` marks an estimate that is only an upper
+    bound because some pin was never seen in the sample."""
+    approx = "at most" if unobserved else "about"
     if est >= 1000:
-        return f"~{est:,.0f} matching seeds expected (estimate)."
+        return f"{approx} {est:,.0f} matching seeds expected ({basis})."
     if est >= 100:
-        return f"~{est:,.0f} matching seeds expected (estimate) -- comfortable."
+        return f"{approx} {est:,.0f} matching seeds expected ({basis}) -- comfortable."
     if est >= 10:
-        return f"~{est:,.0f} matching seeds expected (estimate) -- getting tight."
+        return f"{approx} {est:,.0f} matching seeds expected ({basis}) -- getting tight."
     if est >= 1:
-        return (f"~{est:.1f} matching seeds expected (estimate) -- WARNING: "
+        return (f"{approx} {est:.1f} matching seeds expected ({basis}) -- WARNING: "
                 f"a matching seed may not exist.")
-    return (f"~{est:.3f} matching seeds expected (estimate) -- "
-            f"{num_pins} pins is almost certainly IMPOSSIBLE. A matching seed "
-            f"almost certainly does not exist in the 2^32 seed space.")
+    if est > 0:
+        return (f"{approx} {est:.3f} matching seeds expected ({basis}) -- "
+                f"these {num_pins} pins are almost certainly IMPOSSIBLE. A matching "
+                f"seed almost certainly does not exist in the 2^32 seed space.")
+    return (f"0 matching seeds ({basis}) -- these {num_pins} pins are IMPOSSIBLE: "
+            f"the game can never place an item that way.")
+
+
+# ---------------------------------------------------------------------------
+# Measured feasibility: Monte-Carlo placement statistics per variant
+# ---------------------------------------------------------------------------
+#
+# The uniform model above is off by more than an order of magnitude per pin
+# in both directions: measured on the Normal variant, a key pinned to the
+# `ToyLock` puzzle lands there in ~14% of seeds (uniform says 1.1%), while
+# the same key pinned to one particular free spot lands there in ~0.3% of
+# seeds (uniform says 1.1%), and a category-4 ("free-only") item can never
+# land on a puzzle at all. `PlacementStats` replaces the assumption with the
+# simulator's own behaviour: it runs the exact placement algorithm on a few
+# thousand seeds spread over the int32 space, records where every item
+# landed, and estimates a pin set from those samples -- conditioning on the
+# earlier pins while enough matching samples remain, so correlations such as
+# "two items cannot share a slot" and "once ToyLock is taken, the other keys
+# shift" are captured too.
+
+DEFAULT_FEASIBILITY_SAMPLES = 5000
+# Minimum number of matching samples left before we stop conditioning on
+# previous pins and fall back to each remaining pin's unconditional marginal.
+_MIN_CONDITIONAL_SAMPLES = 100
+
+
+@dataclass
+class FeasibilityEstimate:
+    expected_matches: float   # expected matching seeds in the full 2**32 space
+    num_pins: int
+    num_samples: int
+    impossible: bool          # proven impossible from the config (not sampling)
+    unobserved: bool          # some pin never occurred in the sample: only an upper bound
+    reason: str = ""          # why `impossible`, when it is
+
+
+class PlacementStats:
+    """Per-item slot frequencies measured by running the real placement
+    algorithm (`_run_fast_multi_attempt`, bit-exact with simulate()) on
+    `num_samples` seeds drawn uniformly from the int32 seed space.
+
+    Build one per house variant; construction costs ~1.4 ms per sample on a
+    desktop CPU (~7 s for the default 5,000 samples), so the GUI builds it
+    on a background thread and shows the uniform estimate until it's ready.
+    """
+
+    def __init__(self, config: dict, num_samples: int = DEFAULT_FEASIBILITY_SAMPLES,
+                 rng_seed: int = 0x5EED, progress_cb: Optional[Callable[[int, int], None]] = None,
+                 cancel_evt: Any = None):
+        import random
+        self.config = config
+        self.variant_name = config.get("variantName")
+        ctx = SimContext(config)
+        self._items_by_norm = {_norm_name(i.itemName): i for i in ctx.valid_items_all}
+        self._puzzles_by_norm = {
+            _norm_name(p.puzzleName): p for p in ctx.puzzle_defs if p.spawnPointId is not None
+        }
+        self._free_labels = set()
+        for a in config["spawnAreas"]:
+            for spot in a.freeSpots:
+                self._free_labels.add(f"FREE:{a.areaName}/{spot.name}")
+
+        rnd = random.Random(rng_seed)
+        self.samples: list[dict] = []   # per sample: norm item name -> slot label
+        self.counts: dict = {n: {} for n in self._items_by_norm}
+        for k in range(num_samples):
+            if cancel_evt is not None and cancel_evt.is_set():
+                break
+            seed = rnd.getrandbits(32) - 2 ** 31
+            placement = _run_fast_multi_attempt(seed, ctx, {})
+            sample = {}
+            for item_name, label in placement.items():
+                n = _norm_name(item_name)
+                sample[n] = label
+                c = self.counts.setdefault(n, {})
+                c[label] = c.get(label, 0) + 1
+            self.samples.append(sample)
+            if progress_cb is not None and (k + 1) % 250 == 0:
+                progress_cb(k + 1, num_samples)
+        self.num_samples = len(self.samples)
+
+    # -- single-pin statistics ------------------------------------------
+
+    def marginal_count(self, item_name: str, slot_label: str) -> int:
+        return self.counts.get(_norm_name(item_name), {}).get(slot_label, 0)
+
+    def marginal(self, item_name: str, slot_label: str) -> float:
+        """Measured P(item lands on slot_label); 0.0 if never observed."""
+        if not self.num_samples:
+            return 0.0
+        return self.marginal_count(item_name, slot_label) / self.num_samples
+
+    def impossible_reason(self, item_name: str, slot_label: str) -> Optional[str]:
+        """A reason this single pin can NEVER be satisfied, decided from the
+        config alone (the game's own eligibility predicates), or None."""
+        item = self._items_by_norm.get(_norm_name(item_name))
+        if item is None:
+            return f"'{item_name}' is not a valid item in this house version."
+        if slot_label.startswith("PUZZLE:"):
+            puzzle = self._puzzles_by_norm.get(_norm_name(slot_label[len("PUZZLE:"):]))
+            if puzzle is None:
+                return f"'{slot_label}' is not a puzzle slot in this house version."
+            if not category_ok(item):
+                return (f"'{item.itemName}' is a free-only item (category 4); the game "
+                        f"never puts it in a puzzle.")
+            if not is_item_allowed_for_puzzle(item, puzzle):
+                return f"'{item.itemName}' is not an allowed item for puzzle '{puzzle.puzzleName}'."
+            return None
+        if slot_label not in self._free_labels:
+            return f"'{slot_label}' is not a slot in this house version."
+        return None
+
+    # -- pin-set estimate -------------------------------------------------
+
+    def estimate(self, constraints: list[Constraint]) -> FeasibilityEstimate:
+        """Expected number of seeds (over 2**32) satisfying every PIN in
+        `constraints`, measured from the sample.
+
+        Pins are taken most-common first. While at least
+        `_MIN_CONDITIONAL_SAMPLES` samples still satisfy all previous pins,
+        the next pin's probability is measured *within* those samples
+        (capturing correlations); after that, remaining pins use their
+        unconditional marginal. A pin never observed contributes an upper
+        bound of 0.5 / (samples looked at), and the estimate is flagged
+        `unobserved`. Structural impossibilities (free-only item on a
+        puzzle, two items on one slot, ...) are reported as exactly 0.
+        """
+        pins = [c for c in constraints if c.kind == "pin"]
+        n_pins = len(pins)
+        if n_pins == 0:
+            return FeasibilityEstimate(float(SEED_SPACE), 0, self.num_samples, False, False)
+
+        seen_items: dict = {}
+        seen_slots: dict = {}
+        for c in pins:
+            item_n = _norm_name(c.item_name)
+            reason = self.impossible_reason(c.item_name, c.slot_label)
+            if reason is None and item_n in seen_items and seen_items[item_n] != c.slot_label:
+                reason = f"'{c.item_name}' is pinned to two different slots."
+            if reason is None and c.slot_label in seen_slots and seen_slots[c.slot_label] != item_n:
+                reason = (f"'{seen_slots[c.slot_label]}' and '{c.item_name}' are both pinned to "
+                          f"'{c.slot_label}' -- one slot holds one item.")
+            if reason is not None:
+                return FeasibilityEstimate(0.0, n_pins, self.num_samples, True, False, reason)
+            seen_items[item_n] = c.slot_label
+            seen_slots[c.slot_label] = item_n
+        # Duplicate identical pins (same item, same slot) count once.
+        pins = [Constraint(item_n, label, "pin") for item_n, label in seen_items.items()]
+        n_pins = len(pins)
+
+        if not self.num_samples:
+            return FeasibilityEstimate(0.0, n_pins, 0, False, True)
+
+        pins.sort(key=lambda c: self.marginal_count(c.item_name, c.slot_label), reverse=True)
+        subset = list(range(self.num_samples))
+        prob = 1.0
+        unobserved = False
+        for c in pins:
+            item_n = _norm_name(c.item_name)
+            if len(subset) >= _MIN_CONDITIONAL_SAMPLES:
+                hits = [i for i in subset if self.samples[i].get(item_n) == c.slot_label]
+                n = len(subset)
+            else:
+                hits = None
+                n = self.num_samples
+            k = len(hits) if hits is not None else self.marginal_count(c.item_name, c.slot_label)
+            if k == 0:
+                prob *= 0.5 / n
+                unobserved = True
+                subset = []
+            else:
+                prob *= k / n
+                if hits is not None:
+                    subset = hits
+        return FeasibilityEstimate(SEED_SPACE * prob, n_pins, self.num_samples, False, unobserved)
+
+    def feasibility_message(self, constraints: list[Constraint]) -> str:
+        est = self.estimate(constraints)
+        if est.num_pins == 0:
+            return "No pins set -- every seed is a candidate (ranked by preferences)."
+        if est.impossible:
+            return f"IMPOSSIBLE: {est.reason}"
+        basis = f"measured from {est.num_samples:,} sampled layouts"
+        return _format_feasibility(est.expected_matches, est.num_pins, basis, est.unobserved)
 
 
 def total_slots_for_config(config: dict) -> int:
