@@ -244,7 +244,7 @@ expected number of matching seeds in the full `2^32` seed space.
 
 **The estimate is measured, not assumed.** When a house version is selected,
 the tool runs the game's own placement algorithm (the same bit-exact
-simulator the search uses) on 5,000 seeds spread over the seed space in the
+simulator the search uses) on 8,000 seeds spread over the seed space in the
 background, and records where every item actually landed. Your pins are
 then priced from those real odds (`search.PlacementStats`), conditioning
 each pin on the ones before it while enough matching samples remain, so
@@ -271,8 +271,8 @@ sample is reported as an upper bound ("at most ...").
 As a rule of thumb for `Normal`, 1-3 pins are usually easy, 4 pins often
 still work if they include puzzle slots, and 5+ free-spot pins almost never
 have a seed. Smaller house versions have fewer slots, so they tolerate more
-pins. Treat the number as an estimate from a 5,000-layout sample (roughly
-+/-30% for rare single pins), not a guarantee. If a search comes back empty,
+pins. Treat the number as an estimate from an 8,000-layout sample (roughly
++/-25% for rare free-spot pins, a few percent for puzzle pins), not a guarantee. If a search comes back empty,
 especially after already scanning 2^32 or more consecutive seeds, the most
 effective fix is almost always to **remove one pin constraint** and search
 again -- the feasibility line tells you which pins are the expensive ones.

@@ -197,7 +197,7 @@ def _format_feasibility(est: float, num_pins: int, basis: str, unobserved: bool)
 # "two items cannot share a slot" and "once ToyLock is taken, the other keys
 # shift" are captured too.
 
-DEFAULT_FEASIBILITY_SAMPLES = 5000
+DEFAULT_FEASIBILITY_SAMPLES = 8000
 # Minimum number of matching samples left before we stop conditioning on
 # previous pins and fall back to each remaining pin's unconditional marginal.
 _MIN_CONDITIONAL_SAMPLES = 100
@@ -219,7 +219,7 @@ class PlacementStats:
     `num_samples` seeds drawn uniformly from the int32 seed space.
 
     Build one per house variant; construction costs ~1.4 ms per sample on a
-    desktop CPU (~7 s for the default 5,000 samples), so the GUI builds it
+    desktop CPU (~11 s for the default 8,000 samples), so the GUI builds it
     on a background thread and shows the uniform estimate until it's ready.
     """
 
@@ -299,9 +299,10 @@ class PlacementStats:
         `_MIN_CONDITIONAL_SAMPLES` samples still satisfy all previous pins,
         the next pin's probability is measured *within* those samples
         (capturing correlations); after that, remaining pins use their
-        unconditional marginal. A pin never observed contributes an upper
-        bound of 0.5 / (samples looked at), and the estimate is flagged
-        `unobserved`. Structural impossibilities (free-only item on a
+        unconditional marginal (also when the pin never occurs among the
+        samples matching the earlier pins). A pin never observed at all
+        contributes 0.5 / num_samples and the estimate is flagged
+        `unobserved` (it is only an upper bound then). Structural impossibilities (free-only item on a
         puzzle, two items on one slot, ...) are reported as exactly 0.
         """
         pins = [c for c in constraints if c.kind == "pin"]
@@ -343,14 +344,18 @@ class PlacementStats:
                 hits = None
                 n = self.num_samples
             k = len(hits) if hits is not None else self.marginal_count(c.item_name, c.slot_label)
+            if k == 0 and hits is not None:
+                # Not seen among the samples matching the earlier pins: too
+                # rare to condition on, so fall back to its marginal.
+                hits = None
+                n = self.num_samples
+                k = self.marginal_count(c.item_name, c.slot_label)
             if k == 0:
                 prob *= 0.5 / n
                 unobserved = True
-                subset = []
             else:
                 prob *= k / n
-                if hits is not None:
-                    subset = hits
+            subset = hits if hits is not None else []
         return FeasibilityEstimate(SEED_SPACE * prob, n_pins, self.num_samples, False, unobserved)
 
     def feasibility_message(self, constraints: list[Constraint]) -> str:
